@@ -52,10 +52,7 @@
                             <Width>600</Width>
                         </MaxSize>
                     </Geometry>
-                    <Icons>
-                        <Icon Type="Normal">./icons/icon.png</Icon>
-                    </Icons>
-                </UI>
+                    </UI>
             </DispatchInfo>
         </Extension>
     </DispatchInfoList>
