@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pulse for After Effects</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <h1>Pulse</h1>
+            <div id="connection-status" class="status disconnected">
+                <span class="status-dot"></span>
+                <span class="status-text">Disconnected</span>
+            </div>
+        </header>
+
+        <!-- Tab Navigation -->
+        <nav class="tabs">
+            <button class="tab active" data-tab="toggles">Quick Toggles</button>
+            <button class="tab" data-tab="tokens">Tokens</button>
+            <button class="tab" data-tab="profiler">Profiler</button>
+            <button class="tab" data-tab="settings">Settings</button>
+        </nav>
+
+        <!-- Quick Toggles Tab -->
+        <section id="tab-toggles" class="tab-content active">
+            <div class="section">
+                <h2>Auto Draft Ladder</h2>
+                <div class="draft-controls">
+                    <div class="control-group">
+                        <label>Aggressiveness</label>
+                        <div class="slider-group">
+                            <input type="range" id="draft-aggressiveness" min="1" max="3" value="2">
+                            <span id="aggressiveness-value">2</span>
+                        </div>
+                        <div class="aggressiveness-labels">
+                            <span>Light</span>
+                            <span>Medium</span>
+                            <span>Heavy</span>
+                        </div>
+                    </div>
+                    <div class="button-group">
+                        <button id="btn-draft-enable" class="btn btn-primary">Enable Draft Mode</button>
+                        <button id="btn-draft-disable" class="btn btn-secondary" disabled>Disable Draft Mode</button>
+                    </div>
+                </div>
+                <div id="draft-status" class="info-box hidden">
+                    <strong>Draft Mode Active</strong>
+                    <p id="draft-status-details"></p>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Quick Actions</h2>
+                <div class="button-group vertical">
+                    <button id="btn-refresh-comp" class="btn btn-secondary">Refresh Comp Summary</button>
+                    <button id="btn-create-token" class="btn btn-primary">Create Token from Selection</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Active Composition</h2>
+                <div id="comp-summary" class="info-box">
+                    <p class="muted">No active composition</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tokens Tab -->
+        <section id="tab-tokens" class="tab-content">
+            <div class="section">
+                <h2>Render Tokens</h2>
+                <div id="tokens-list" class="tokens-list">
+                    <p class="muted">No tokens created yet</p>
+                </div>
+            </div>
+            <div class="section">
+                <button id="btn-refresh-tokens" class="btn btn-secondary btn-block">Refresh Tokens</button>
+            </div>
+        </section>
+
+        <!-- Profiler Tab -->
+        <section id="tab-profiler" class="tab-content">
+            <div class="section">
+                <h2>Performance Profiler</h2>
+                <p class="description">Analyze your composition to find heavy layers and precomps.</p>
+                <button id="btn-run-profiler" class="btn btn-primary btn-block">Run Profiler</button>
+            </div>
+            <div class="section">
+                <h3>Top 10 Heavy Items</h3>
+                <div id="profiler-results" class="profiler-list">
+                    <p class="muted">Run profiler to see results</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Settings Tab -->
+        <section id="tab-settings" class="tab-content">
+            <div class="section">
+                <h2>Worker Settings</h2>
+                <div class="form-group">
+                    <label for="setting-worker-url">Worker URL</label>
+                    <input type="text" id="setting-worker-url" value="http://localhost:3847">
+                </div>
+                <div class="form-group">
+                    <label for="setting-cache-dir">Cache Directory</label>
+                    <input type="text" id="setting-cache-dir" placeholder="~/Pulse_Cache">
+                </div>
+                <div class="form-group">
+                    <label for="setting-format">Output Format</label>
+                    <select id="setting-format">
+                        <option value="png" selected>PNG</option>
+                        <option value="exr">EXR</option>
+                        <option value="tiff">TIFF</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="setting-concurrency">Max Concurrent Renders</label>
+                    <input type="number" id="setting-concurrency" value="1" min="1" max="4">
+                </div>
+                <div class="form-group">
+                    <label for="setting-aerender">aerender Path (optional)</label>
+                    <input type="text" id="setting-aerender" placeholder="Auto-detect">
+                </div>
+                <button id="btn-save-settings" class="btn btn-primary btn-block">Save Settings</button>
+            </div>
+
+            <div class="section">
+                <h2>About</h2>
+                <p class="description">Pulse for After Effects v1.0.0</p>
+                <p class="description muted">Improves AE interactivity via draft modes and precomp caching.</p>
+            </div>
+        </section>
+
+        <!-- Log/Status Area -->
+        <footer class="footer">
+            <div id="log-area" class="log-area">
+                <div class="log-entry info">Ready</div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- CSInterface -->
+    <script src="js/CSInterface.js"></script>
+    <script src="js/panel.js"></script>
+</body>
+</html>
