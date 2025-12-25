@@ -299,12 +299,37 @@ function findExtractedFolder(dir) {
 
 // Check Node.js
 function checkNodeInstalled() {
+    const { isWindows } = getPlatform();
+
+    // First try PATH
     try {
         const version = execSync('node --version', { stdio: 'pipe' }).toString().trim();
         return version;
-    } catch (e) {
-        return null;
+    } catch (e) {}
+
+    // On Windows, check common installation paths
+    if (isWindows) {
+        const commonPaths = [
+            path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs', 'node.exe'),
+            path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'nodejs', 'node.exe'),
+            path.join(process.env.LOCALAPPDATA || '', 'Programs', 'nodejs', 'node.exe'),
+            path.join(process.env.APPDATA || '', 'npm', 'node.exe')
+        ];
+
+        for (const nodePath of commonPaths) {
+            if (fs.existsSync(nodePath)) {
+                try {
+                    const version = execSync(`"${nodePath}" --version`, { stdio: 'pipe' }).toString().trim();
+                    // Add to PATH for this session
+                    const nodeDir = path.dirname(nodePath);
+                    process.env.PATH = `${nodeDir};${process.env.PATH}`;
+                    return version;
+                } catch (e) {}
+            }
+        }
     }
+
+    return null;
 }
 
 // Get Node.js download URL
