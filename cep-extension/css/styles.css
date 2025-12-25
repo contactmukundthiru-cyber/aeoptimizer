@@ -530,3 +530,288 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
+/* Header Right */
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Draft Indicator */
+.draft-indicator {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: transparent;
+    color: transparent;
+}
+
+.draft-indicator.active {
+    background: var(--warning);
+    color: #000;
+    animation: pulse 1s infinite;
+}
+
+/* Checkbox Groups */
+.checkbox-group label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.checkbox-group input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent);
+}
+
+/* Hint Text */
+.hint {
+    display: block;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+/* Draft Active State */
+.draft-active {
+    color: var(--warning);
+    font-weight: 500;
+}
+
+/* Button Active State */
+.btn-active {
+    background: var(--success) !important;
+}
+
+/* Candidates List */
+.candidates-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.candidate-item {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px;
+    margin-bottom: 6px;
+}
+
+.candidate-item.recommended {
+    border-color: var(--warning);
+}
+
+.candidate-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.candidate-name {
+    font-weight: 500;
+    font-size: 11px;
+}
+
+.candidate-cost {
+    font-size: 10px;
+    color: var(--warning);
+}
+
+.candidate-details {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+/* Token Hash */
+.token-hash {
+    font-size: 9px;
+    color: var(--text-muted);
+    font-family: 'Monaco', 'Menlo', monospace;
+    margin-bottom: 8px;
+}
+
+/* Profiler Summary */
+.profiler-summary {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+    padding: 10px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+}
+
+.summary-stat {
+    text-align: center;
+}
+
+.summary-stat.warning .stat-value {
+    color: var(--warning);
+}
+
+.stat-value {
+    display: block;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.stat-label {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+/* Recommendations */
+.recommendations {
+    margin-bottom: 15px;
+}
+
+.recommendation {
+    background: var(--bg-tertiary);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 10px;
+    margin-bottom: 8px;
+}
+
+.recommendation.warning {
+    border-left-color: var(--warning);
+}
+
+.recommendation.action {
+    border-left-color: var(--success);
+}
+
+.recommendation.info {
+    border-left-color: var(--text-muted);
+}
+
+.rec-title {
+    font-weight: 500;
+    font-size: 11px;
+    margin-bottom: 4px;
+}
+
+.rec-desc {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+/* Profiler Layers */
+.profiler-layers {
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+.profiler-item {
+    display: block;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+    padding: 8px;
+    margin-bottom: 6px;
+}
+
+.profiler-item.tokenizable {
+    border-left: 2px solid var(--success);
+}
+
+.profiler-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.layer-name {
+    font-weight: 500;
+    font-size: 11px;
+}
+
+.layer-type {
+    font-size: 9px;
+    color: var(--text-muted);
+    padding: 1px 5px;
+    background: var(--bg-primary);
+    border-radius: 3px;
+}
+
+.profiler-breakdown {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.profiler-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bar-fill {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    transition: width 0.3s;
+}
+
+.bar-fill.low {
+    background: var(--success);
+}
+
+.bar-fill.medium {
+    background: var(--warning);
+}
+
+.bar-fill.high {
+    background: var(--error);
+}
+
+.bar-value {
+    font-size: 10px;
+    font-weight: 500;
+    min-width: 30px;
+    text-align: right;
+}
+
+.btn-tiny {
+    padding: 2px 6px;
+    font-size: 9px;
+    margin-top: 6px;
+}
+
+/* MFR Breakers */
+.mfr-breakers {
+    margin-top: 15px;
+    padding: 10px;
+    background: rgba(244, 67, 54, 0.1);
+    border: 1px solid var(--error);
+    border-radius: var(--radius);
+}
+
+.mfr-breakers h4 {
+    font-size: 11px;
+    color: var(--error);
+    margin-bottom: 8px;
+}
+
+.mfr-item {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.mfr-item strong {
+    color: var(--text-primary);
+}
+
+/* Token Error Status */
+.token-status.error {
+    background: var(--error);
+    color: white;
+}

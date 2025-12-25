@@ -11,53 +11,81 @@
         <!-- Header -->
         <header class="header">
             <h1>Pulse</h1>
-            <div id="connection-status" class="status">
-                <span class="status-dot"></span>
-                <span class="status-text">Starting...</span>
+            <div class="header-right">
+                <span id="auto-draft-indicator" class="draft-indicator"></span>
+                <div id="connection-status" class="status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Starting...</span>
+                </div>
             </div>
         </header>
 
         <!-- Tab Navigation -->
         <nav class="tabs">
-            <button class="tab active" data-tab="toggles">Quick Toggles</button>
+            <button class="tab active" data-tab="draft">Auto Draft</button>
             <button class="tab" data-tab="tokens">Tokens</button>
             <button class="tab" data-tab="profiler">Profiler</button>
             <button class="tab" data-tab="settings">Settings</button>
         </nav>
 
-        <!-- Quick Toggles Tab -->
-        <section id="tab-toggles" class="tab-content active">
+        <!-- Auto Draft Tab -->
+        <section id="tab-draft" class="tab-content active">
             <div class="section">
                 <h2>Auto Draft Ladder</h2>
-                <div class="draft-controls">
-                    <div class="control-group">
-                        <label>Aggressiveness</label>
-                        <div class="slider-group">
-                            <input type="range" id="draft-aggressiveness" min="1" max="3" value="2">
-                            <span id="aggressiveness-value">2</span>
-                        </div>
-                        <div class="aggressiveness-labels">
-                            <span>Light</span>
-                            <span>Medium</span>
-                            <span>Heavy</span>
-                        </div>
-                    </div>
-                    <div class="button-group">
-                        <button id="btn-draft-enable" class="btn btn-primary">Enable Draft Mode</button>
-                        <button id="btn-draft-disable" class="btn btn-secondary" disabled>Disable Draft Mode</button>
-                    </div>
-                </div>
-                <div id="draft-status" class="info-box hidden">
-                    <strong>Draft Mode Active</strong>
-                    <p id="draft-status-details"></p>
-                </div>
-            </div>
+                <p class="description">Automatically reduces quality during scrubbing, restores when idle.</p>
 
-            <div class="section">
-                <h2>Quick Actions</h2>
-                <div class="button-group vertical">
-                    <button id="btn-refresh-comp" class="btn btn-secondary">Refresh Comp Summary</button>
-                    <button id="btn-create-token" class="btn btn-primary">Create Token from Selection</button>
+                <div class="button-group">
+                    <button id="btn-auto-draft-toggle" class="btn btn-primary btn-block">Enable Auto Draft</button>
+                </div>
+
+                <div id="auto-draft-status" class="info-box hidden" style="margin-top: 10px;">
+                    <strong>Auto Draft Active</strong>
+                    <p>Quality will reduce during scrubbing and restore after 400ms idle.</p>
+                </div>
+
+                <div class="draft-settings" style="margin-top: 15px;">
+                    <h3>Draft Settings</h3>
+
+                    <div class="form-group">
+                        <label for="auto-draft-resolution">Resolution</label>
+                        <select id="auto-draft-resolution">
+                            <option value="half">Half</option>
+                            <option value="third">Third</option>
+                            <option value="quarter">Quarter</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="auto-draft-motion-blur" checked>
+                            Disable Motion Blur
+                        </label>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="auto-draft-frame-blend" checked>
+                            Disable Frame Blending
+                        </label>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="auto-draft-optimize-layers" checked>
+                            Optimize Heavy Layers
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="auto-draft-threshold">Cost Threshold</label>
+                        <input type="number" id="auto-draft-threshold" value="40" min="10" max="200">
+                        <span class="hint">Layers above this cost get optimized</span>
+                    </div>
+                </div>
+
+                <div class="section" style="margin-top: 15px;">
+                    <h3>Manual Control</h3>
+                    <button id="btn-manual-draft" class="btn btn-secondary btn-block">Toggle Draft Now</button>
                 </div>
             </div>
 
@@ -73,12 +101,21 @@
         <section id="tab-tokens" class="tab-content">
             <div class="section">
                 <h2>Render Tokens</h2>
+                <p class="description">Cache heavy precomps as rendered footage. Tokens auto-invalidate when the precomp changes.</p>
+
+                <div class="button-group">
+                    <button id="btn-create-token" class="btn btn-primary">Create from Selection</button>
+                    <button id="btn-scan-tokens" class="btn btn-secondary">Scan for Heavy Precomps</button>
+                </div>
+
+                <div id="token-candidates" class="candidates-list" style="margin-top: 10px;"></div>
+            </div>
+
+            <div class="section">
+                <h3>Active Tokens</h3>
                 <div id="tokens-list" class="tokens-list">
                     <p class="muted">No tokens created yet</p>
                 </div>
-            </div>
-            <div class="section">
-                <button id="btn-refresh-tokens" class="btn btn-secondary btn-block">Refresh Tokens</button>
             </div>
         </section>
 
@@ -86,13 +123,13 @@
         <section id="tab-profiler" class="tab-content">
             <div class="section">
                 <h2>Performance Profiler</h2>
-                <p class="description">Analyze your composition to find heavy layers and precomps.</p>
+                <p class="description">Analyze composition complexity, find bottlenecks, get optimization recommendations.</p>
                 <button id="btn-run-profiler" class="btn btn-primary btn-block">Run Profiler</button>
             </div>
+
             <div class="section">
-                <h3>Top 10 Heavy Items</h3>
-                <div id="profiler-results" class="profiler-list">
-                    <p class="muted">Run profiler to see results</p>
+                <div id="profiler-results" class="profiler-results">
+                    <p class="muted">Run profiler to analyze your composition</p>
                 </div>
             </div>
         </section>
@@ -101,10 +138,12 @@
         <section id="tab-settings" class="tab-content">
             <div class="section">
                 <h2>Render Settings</h2>
+
                 <div class="form-group">
                     <label for="setting-cache-dir">Cache Directory</label>
                     <input type="text" id="setting-cache-dir" placeholder="~/Pulse_Cache">
                 </div>
+
                 <div class="form-group">
                     <label for="setting-format">Output Format</label>
                     <select id="setting-format">
@@ -113,22 +152,24 @@
                         <option value="tiff">TIFF</option>
                     </select>
                 </div>
+
                 <div class="form-group">
-                    <label for="setting-aerender">aerender Path (optional)</label>
+                    <label for="setting-aerender">aerender Path</label>
                     <input type="text" id="setting-aerender" placeholder="Auto-detect">
                 </div>
+
                 <button id="btn-save-settings" class="btn btn-primary btn-block">Save Settings</button>
                 <button id="btn-open-cache" class="btn btn-secondary btn-block" style="margin-top: 8px;">Open Cache Folder</button>
             </div>
 
             <div class="section">
                 <h2>About</h2>
-                <p class="description">Pulse for After Effects v1.0.0</p>
-                <p class="description muted">Improves AE interactivity via draft modes and precomp caching.</p>
+                <p class="description">Pulse for After Effects v2.0.0</p>
+                <p class="description muted">Performance acceleration through automatic draft modes, smart caching, and profiling.</p>
             </div>
         </section>
 
-        <!-- Log/Status Area -->
+        <!-- Log Area -->
         <footer class="footer">
             <div id="log-area" class="log-area">
                 <div class="log-entry info">Ready</div>
@@ -136,7 +177,6 @@
         </footer>
     </div>
 
-    <!-- CSInterface -->
     <script src="js/CSInterface.js"></script>
     <script src="js/panel.js"></script>
 </body>
