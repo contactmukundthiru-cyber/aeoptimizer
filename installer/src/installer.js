@@ -1,261 +1,82 @@
 #!/usr/bin/env node
 
 /**
- * Pulse for After Effects - Interactive Installer
- *
- * Features:
- * - Install/Update/Uninstall
- * - Auto-downloads latest version from GitHub
- * - Works offline with bundled version
+ * Pulse for After Effects - Simple Installer
+ * Just copies files and enables debug mode - no server needed
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const https = require('https');
-const http = require('http');
-const { execSync, spawn } = require('child_process');
+const { execSync } = require('child_process');
 const readline = require('readline');
 
-// Configuration
 const CONFIG = {
-    github: {
-        owner: 'contactmukundthiru-cyber',
-        repo: 'aeoptimizer',
-        apiUrl: 'https://api.github.com'
-    },
     extensionId: 'com.pulse.aeoptimizer',
     appName: 'Pulse for After Effects',
     version: '1.0.0'
 };
 
-// Colors for terminal
-const colors = {
+// Colors
+const c = {
     reset: '\x1b[0m',
-    bright: '\x1b[1m',
-    dim: '\x1b[2m',
-    red: '\x1b[31m',
     green: '\x1b[32m',
+    red: '\x1b[31m',
     yellow: '\x1b[33m',
-    blue: '\x1b[34m',
     cyan: '\x1b[36m',
-    white: '\x1b[37m'
+    dim: '\x1b[2m'
 };
 
-function log(msg, color = '') {
-    console.log(`${color}${msg}${colors.reset}`);
-}
+const log = (msg) => console.log(msg);
+const ok = (msg) => console.log(`${c.green}✓ ${msg}${c.reset}`);
+const err = (msg) => console.log(`${c.red}✗ ${msg}${c.reset}`);
+const info = (msg) => console.log(`${c.cyan}→ ${msg}${c.reset}`);
+const warn = (msg) => console.log(`${c.yellow}! ${msg}${c.reset}`);
 
-function logSuccess(msg) { log(`✓ ${msg}`, colors.green); }
-function logError(msg) { log(`✗ ${msg}`, colors.red); }
-function logInfo(msg) { log(`→ ${msg}`, colors.cyan); }
-function logWarn(msg) { log(`! ${msg}`, colors.yellow); }
-
-// Platform detection
 function getPlatform() {
     const platform = os.platform();
-    const arch = os.arch();
-    return { platform, arch, isWindows: platform === 'win32', isMac: platform === 'darwin' };
-}
-
-// Get installation paths
-function getInstallPaths() {
-    const { isWindows, isMac } = getPlatform();
-    const home = os.homedir();
-
-    let cepExtensions, pulseData;
-
-    if (isWindows) {
-        cepExtensions = path.join(process.env.APPDATA, 'Adobe', 'CEP', 'extensions');
-        pulseData = path.join(process.env.APPDATA, 'Pulse');
-    } else if (isMac) {
-        cepExtensions = path.join(home, 'Library', 'Application Support', 'Adobe', 'CEP', 'extensions');
-        pulseData = path.join(home, 'Library', 'Application Support', 'Pulse');
-    } else {
-        cepExtensions = path.join(home, '.config', 'Adobe', 'CEP', 'extensions');
-        pulseData = path.join(home, '.config', 'Pulse');
-    }
-
     return {
-        cepExtensions,
-        extensionPath: path.join(cepExtensions, CONFIG.extensionId),
-        pulseData,
-        workerPath: path.join(pulseData, 'worker'),
-        updaterPath: path.join(pulseData, 'updater'),
-        configPath: path.join(pulseData, 'config.json')
+        isWindows: platform === 'win32',
+        isMac: platform === 'darwin'
     };
 }
 
-// Check if Pulse is installed
-function isInstalled() {
-    const paths = getInstallPaths();
-    return fs.existsSync(paths.extensionPath) && fs.existsSync(paths.workerPath);
+function getExtensionPath() {
+    const { isWindows, isMac } = getPlatform();
+    const home = os.homedir();
+
+    if (isWindows) {
+        return path.join(process.env.APPDATA, 'Adobe', 'CEP', 'extensions', CONFIG.extensionId);
+    } else if (isMac) {
+        return path.join(home, 'Library', 'Application Support', 'Adobe', 'CEP', 'extensions', CONFIG.extensionId);
+    } else {
+        return path.join(home, '.config', 'Adobe', 'CEP', 'extensions', CONFIG.extensionId);
+    }
 }
 
-// Get installed version
-function getInstalledVersion() {
-    const paths = getInstallPaths();
-    try {
-        if (fs.existsSync(paths.configPath)) {
-            const config = JSON.parse(fs.readFileSync(paths.configPath, 'utf8'));
-            return config.version || null;
+function getSourcePath() {
+    // Check multiple locations for the source files
+    const locations = [
+        path.join(__dirname, '..', 'bundled', 'cep-extension'),
+        path.join(__dirname, '..', '..', 'cep-extension'),
+        path.join(process.cwd(), 'bundled', 'cep-extension'),
+        path.join(process.cwd(), 'cep-extension'),
+        path.join(path.dirname(process.execPath), 'bundled', 'cep-extension')
+    ];
+
+    for (const loc of locations) {
+        if (fs.existsSync(loc)) {
+            return loc;
         }
-    } catch (e) {}
+    }
+
     return null;
 }
 
-// Simple HTTP/HTTPS request wrapper
-function request(url, options = {}) {
-    return new Promise((resolve, reject) => {
-        const protocol = url.startsWith('https') ? https : http;
-        const req = protocol.get(url, {
-            headers: {
-                'User-Agent': 'Pulse-Installer/1.0',
-                ...options.headers
-            }
-        }, (res) => {
-            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                return request(res.headers.location, options).then(resolve).catch(reject);
-            }
-
-            if (res.statusCode !== 200) {
-                reject(new Error(`HTTP ${res.statusCode}`));
-                return;
-            }
-
-            if (options.stream) {
-                resolve(res);
-                return;
-            }
-
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => resolve(data));
-        });
-
-        req.on('error', reject);
-        req.setTimeout(30000, () => {
-            req.destroy();
-            reject(new Error('Request timeout'));
-        });
-    });
-}
-
-// Download file with progress
-function downloadFile(url, destPath, onProgress) {
-    return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(destPath);
-
-        const doRequest = (downloadUrl) => {
-            const protocol = downloadUrl.startsWith('https') ? https : http;
-
-            protocol.get(downloadUrl, {
-                headers: { 'User-Agent': 'Pulse-Installer/1.0' }
-            }, (res) => {
-                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    return doRequest(res.headers.location);
-                }
-
-                if (res.statusCode !== 200) {
-                    file.close();
-                    fs.unlinkSync(destPath);
-                    reject(new Error(`HTTP ${res.statusCode}`));
-                    return;
-                }
-
-                const totalSize = parseInt(res.headers['content-length'], 10) || 0;
-                let downloadedSize = 0;
-
-                res.on('data', (chunk) => {
-                    downloadedSize += chunk.length;
-                    if (onProgress && totalSize > 0) {
-                        onProgress(downloadedSize, totalSize);
-                    }
-                });
-
-                res.pipe(file);
-
-                file.on('finish', () => {
-                    file.close();
-                    resolve(destPath);
-                });
-            }).on('error', (err) => {
-                file.close();
-                fs.unlinkSync(destPath);
-                reject(err);
-            });
-        };
-
-        doRequest(url);
-    });
-}
-
-// Get latest release from GitHub
-async function getLatestRelease() {
-    const url = `${CONFIG.github.apiUrl}/repos/${CONFIG.github.owner}/${CONFIG.github.repo}/releases/latest`;
-
-    try {
-        const data = await request(url);
-        return JSON.parse(data);
-    } catch (error) {
-        return null;
-    }
-}
-
-// Enable CEP debug mode
-function enableDebugMode() {
-    const { isWindows, isMac } = getPlatform();
-
-    try {
-        if (isMac) {
-            for (const version of [11, 10, 9, 8]) {
-                try {
-                    execSync(`defaults write com.adobe.CSXS.${version} PlayerDebugMode 1`, { stdio: 'pipe' });
-                } catch (e) {}
-            }
-        } else if (isWindows) {
-            for (const version of [11, 10, 9, 8]) {
-                try {
-                    execSync(`reg add "HKCU\\Software\\Adobe\\CSXS.${version}" /v PlayerDebugMode /t REG_SZ /d 1 /f`, { stdio: 'pipe' });
-                } catch (e) {}
-            }
-        }
-        return true;
-    } catch (error) {
-        return false;
-    }
-}
-
-// Disable CEP debug mode
-function disableDebugMode() {
-    const { isWindows, isMac } = getPlatform();
-
-    try {
-        if (isMac) {
-            for (const version of [11, 10, 9, 8]) {
-                try {
-                    execSync(`defaults delete com.adobe.CSXS.${version} PlayerDebugMode`, { stdio: 'pipe' });
-                } catch (e) {}
-            }
-        } else if (isWindows) {
-            for (const version of [11, 10, 9, 8]) {
-                try {
-                    execSync(`reg delete "HKCU\\Software\\Adobe\\CSXS.${version}" /v PlayerDebugMode /f`, { stdio: 'pipe' });
-                } catch (e) {}
-            }
-        }
-        return true;
-    } catch (error) {
-        return false;
-    }
-}
-
-// Copy directory recursively
 function copyDir(src, dest) {
     fs.mkdirSync(dest, { recursive: true });
-    const entries = fs.readdirSync(src, { withFileTypes: true });
 
-    for (const entry of entries) {
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
         const srcPath = path.join(src, entry.name);
         const destPath = path.join(dest, entry.name);
 
@@ -267,654 +88,236 @@ function copyDir(src, dest) {
     }
 }
 
-// Remove directory recursively
 function removeDir(dir) {
     if (fs.existsSync(dir)) {
         fs.rmSync(dir, { recursive: true, force: true });
     }
 }
 
-// Extract zip file
-function extractZip(zipPath, destPath) {
-    const { isWindows } = getPlatform();
-    fs.mkdirSync(destPath, { recursive: true });
+function enableDebugMode() {
+    const { isWindows, isMac } = getPlatform();
 
-    if (isWindows) {
-        execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destPath}' -Force"`, { stdio: 'pipe' });
-    } else {
-        execSync(`unzip -o "${zipPath}" -d "${destPath}"`, { stdio: 'pipe' });
-    }
-}
-
-// Find extracted folder
-function findExtractedFolder(dir) {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-        if (entry.isDirectory()) {
-            return path.join(dir, entry.name);
-        }
-    }
-    return dir;
-}
-
-// Check Node.js
-function checkNodeInstalled() {
-    const { isWindows } = getPlatform();
-
-    // First try PATH
     try {
-        const version = execSync('node --version', { stdio: 'pipe' }).toString().trim();
-        return version;
-    } catch (e) {}
-
-    // On Windows, check common installation paths
-    if (isWindows) {
-        const commonPaths = [
-            path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs', 'node.exe'),
-            path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'nodejs', 'node.exe'),
-            path.join(process.env.LOCALAPPDATA || '', 'Programs', 'nodejs', 'node.exe'),
-            path.join(process.env.APPDATA || '', 'npm', 'node.exe')
-        ];
-
-        for (const nodePath of commonPaths) {
-            if (fs.existsSync(nodePath)) {
-                try {
-                    const version = execSync(`"${nodePath}" --version`, { stdio: 'pipe' }).toString().trim();
-                    // Add to PATH for this session
-                    const nodeDir = path.dirname(nodePath);
-                    process.env.PATH = `${nodeDir};${process.env.PATH}`;
-                    return version;
-                } catch (e) {}
+        if (isMac) {
+            for (const v of [8, 9, 10, 11, 12]) {
+                try { execSync(`defaults write com.adobe.CSXS.${v} PlayerDebugMode 1`, { stdio: 'pipe' }); } catch (e) {}
+            }
+        } else if (isWindows) {
+            for (const v of [8, 9, 10, 11, 12]) {
+                try { execSync(`reg add "HKCU\\Software\\Adobe\\CSXS.${v}" /v PlayerDebugMode /t REG_SZ /d 1 /f`, { stdio: 'pipe' }); } catch (e) {}
             }
         }
-    }
-
-    return null;
-}
-
-// Get Node.js download URL
-function getNodeDownloadUrl() {
-    const { isWindows, isMac, arch } = getPlatform();
-    const nodeVersion = '20.11.0'; // LTS version
-
-    if (isWindows) {
-        return `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-x64.msi`;
-    } else if (isMac) {
-        const macArch = arch === 'arm64' ? 'arm64' : 'x64';
-        return `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-darwin-${macArch}.pkg`;
-    } else {
-        // Linux - return tarball URL
-        const linuxArch = arch === 'arm64' ? 'arm64' : 'x64';
-        return `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-linux-${linuxArch}.tar.xz`;
+        return true;
+    } catch (e) {
+        return false;
     }
 }
 
-// Install Node.js
-async function installNodeJS() {
+function disableDebugMode() {
     const { isWindows, isMac } = getPlatform();
-    const downloadUrl = getNodeDownloadUrl();
-    const tempDir = path.join(os.tmpdir(), 'pulse-node-install');
-
-    fs.mkdirSync(tempDir, { recursive: true });
-
-    let installerPath;
-    if (isWindows) {
-        installerPath = path.join(tempDir, 'node-installer.msi');
-    } else if (isMac) {
-        installerPath = path.join(tempDir, 'node-installer.pkg');
-    } else {
-        logError('Auto-install not supported on Linux. Please install Node.js manually:');
-        log('  sudo apt install nodejs npm', colors.bright);
-        log('  or visit: https://nodejs.org/', colors.bright);
-        return false;
-    }
-
-    logInfo('Downloading Node.js...');
 
     try {
-        await downloadFile(downloadUrl, installerPath, (downloaded, total) => {
-            showProgress(downloaded, total, 'Downloading Node.js');
-        });
-        logSuccess('Download complete');
-    } catch (error) {
-        logError(`Failed to download Node.js: ${error.message}`);
-        return false;
-    }
-
-    logInfo('Installing Node.js (this may require admin privileges)...');
-
-    try {
-        if (isWindows) {
-            // Run MSI installer with UI (silent requires admin)
-            log('The Node.js installer will open. Please complete the installation.', colors.yellow);
-            execSync(`msiexec /i "${installerPath}"`, {
-                stdio: 'inherit',
-                timeout: 600000 // 10 minutes for user interaction
-            });
-        } else if (isMac) {
-            // Open PKG installer (will show GUI)
-            log('The Node.js installer will open. Please complete the installation.', colors.yellow);
-            execSync(`open -W "${installerPath}"`, {
-                stdio: 'inherit',
-                timeout: 600000
-            });
+        if (isMac) {
+            for (const v of [8, 9, 10, 11, 12]) {
+                try { execSync(`defaults delete com.adobe.CSXS.${v} PlayerDebugMode`, { stdio: 'pipe' }); } catch (e) {}
+            }
+        } else if (isWindows) {
+            for (const v of [8, 9, 10, 11, 12]) {
+                try { execSync(`reg delete "HKCU\\Software\\Adobe\\CSXS.${v}" /v PlayerDebugMode /f`, { stdio: 'pipe' }); } catch (e) {}
+            }
         }
-
-        // Verify installation
-        const newVersion = checkNodeInstalled();
-        if (newVersion) {
-            logSuccess(`Node.js ${newVersion} installed successfully`);
-            return true;
-        } else {
-            logWarn('Node.js installed but not found in PATH. You may need to restart your terminal.');
-            return true;
-        }
-    } catch (error) {
-        logError(`Installation failed: ${error.message}`);
-        log('Please install Node.js manually from: https://nodejs.org/', colors.yellow);
-        return false;
-    } finally {
-        // Cleanup
-        try {
-            fs.unlinkSync(installerPath);
-            fs.rmdirSync(tempDir);
-        } catch (e) {}
-    }
+    } catch (e) {}
 }
 
-// Create launch scripts
-function createLaunchScripts(paths) {
-    const { isWindows } = getPlatform();
-
-    if (isWindows) {
-        const batContent = `@echo off
-title Pulse Worker
-cd /d "${paths.workerPath}"
-node server.js
-pause
-`;
-        fs.writeFileSync(path.join(paths.pulseData, 'Start Pulse Worker.bat'), batContent);
-
-        // Desktop shortcut
-        const vbsContent = `Set oWS = WScript.CreateObject("WScript.Shell")
-sLinkFile = oWS.SpecialFolders("Desktop") & "\\Pulse Worker.lnk"
-Set oLink = oWS.CreateShortcut(sLinkFile)
-oLink.TargetPath = "${path.join(paths.pulseData, 'Start Pulse Worker.bat').replace(/\\/g, '\\\\')}"
-oLink.WorkingDirectory = "${paths.workerPath.replace(/\\/g, '\\\\')}"
-oLink.Description = "Start Pulse Worker"
-oLink.Save
-`;
-        const vbsPath = path.join(paths.pulseData, 'create-shortcut.vbs');
-        fs.writeFileSync(vbsPath, vbsContent);
-        try {
-            execSync(`cscript //nologo "${vbsPath}"`, { stdio: 'pipe' });
-            fs.unlinkSync(vbsPath);
-        } catch (e) {}
-
-    } else {
-        const shContent = `#!/bin/bash
-cd "${paths.workerPath}"
-node server.js
-`;
-        const scriptPath = path.join(paths.pulseData, 'start-worker.sh');
-        fs.writeFileSync(scriptPath, shContent);
-        fs.chmodSync(scriptPath, '755');
-    }
+function isInstalled() {
+    return fs.existsSync(getExtensionPath());
 }
 
-// Remove launch scripts
-function removeLaunchScripts(paths) {
-    const { isWindows } = getPlatform();
-
-    if (isWindows) {
-        const batPath = path.join(paths.pulseData, 'Start Pulse Worker.bat');
-        if (fs.existsSync(batPath)) fs.unlinkSync(batPath);
-
-        // Remove desktop shortcut
-        const desktopPath = path.join(os.homedir(), 'Desktop', 'Pulse Worker.lnk');
-        if (fs.existsSync(desktopPath)) fs.unlinkSync(desktopPath);
-    } else {
-        const shPath = path.join(paths.pulseData, 'start-worker.sh');
-        if (fs.existsSync(shPath)) fs.unlinkSync(shPath);
-    }
-}
-
-// Create config
-function createConfig(paths, version) {
-    const config = {
-        version: version,
-        installedAt: new Date().toISOString(),
-        github: CONFIG.github,
-        autoUpdate: true,
-        checkInterval: 86400000
-    };
-
-    fs.writeFileSync(paths.configPath, JSON.stringify(config, null, 2));
-}
-
-// Progress bar
-function showProgress(current, total, label = 'Progress') {
-    const percent = Math.round((current / total) * 100);
-    const barLength = 30;
-    const filled = Math.round((percent / 100) * barLength);
-    const bar = '█'.repeat(filled) + '░'.repeat(barLength - filled);
-
-    process.stdout.write(`\r${label}: [${bar}] ${percent}%`);
-
-    if (current >= total) {
-        console.log('');
-    }
-}
-
-// Get bundled path
-function getBundledPath() {
-    const bundledPaths = [
-        path.join(__dirname, '..', 'bundled'),
-        path.join(__dirname, 'bundled'),
-        path.join(process.cwd(), 'bundled'),
-        path.join(path.dirname(process.execPath), 'bundled')
-    ];
-
-    for (const p of bundledPaths) {
-        if (fs.existsSync(p)) {
-            return p;
-        }
-    }
-    return null;
-}
-
-// Readline interface
 function createRL() {
-    return readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
+    return readline.createInterface({ input: process.stdin, output: process.stdout });
 }
 
-// Ask question
-function ask(rl, question) {
-    return new Promise(resolve => {
-        rl.question(question, resolve);
-    });
+function ask(rl, q) {
+    return new Promise(resolve => rl.question(q, resolve));
 }
 
-// Show header
 function showHeader() {
     console.clear();
-    log('╔══════════════════════════════════════════════════╗', colors.cyan);
-    log('║                                                  ║', colors.cyan);
-    log('║      Pulse for After Effects                     ║', colors.cyan);
-    log('║      Interactive Installer                       ║', colors.cyan);
-    log('║                                                  ║', colors.cyan);
-    log('╚══════════════════════════════════════════════════╝', colors.cyan);
-    console.log('');
+    log(`${c.cyan}╔══════════════════════════════════════════════════╗${c.reset}`);
+    log(`${c.cyan}║      Pulse for After Effects                     ║${c.reset}`);
+    log(`${c.cyan}║      Installer v${CONFIG.version}                            ║${c.reset}`);
+    log(`${c.cyan}╚══════════════════════════════════════════════════╝${c.reset}`);
+    log('');
 }
 
-// Show menu
-async function showMenu(rl) {
-    const installed = isInstalled();
-    const installedVersion = getInstalledVersion();
-    const { isWindows, isMac } = getPlatform();
+async function install() {
+    const sourcePath = getSourcePath();
+    const destPath = getExtensionPath();
 
-    log(`Platform: ${isWindows ? 'Windows' : isMac ? 'macOS' : 'Linux'}`, colors.dim);
-
-    if (installed) {
-        log(`Status: Installed (v${installedVersion || 'unknown'})`, colors.green);
-    } else {
-        log(`Status: Not installed`, colors.yellow);
+    if (!sourcePath) {
+        err('Extension files not found!');
+        log(`${c.dim}Looking in: ${path.join(__dirname, '..', 'bundled', 'cep-extension')}${c.reset}`);
+        return false;
     }
 
-    console.log('');
-    log('─────────────────────────────────────────────────', colors.dim);
-    console.log('');
-
-    if (installed) {
-        log('  [1] Update Pulse', colors.bright);
-        log('  [2] Reinstall Pulse', colors.bright);
-        log('  [3] Uninstall Pulse', colors.red);
-        log('  [4] Check for Updates', colors.bright);
-        log('  [5] Exit', colors.dim);
-    } else {
-        log('  [1] Install Pulse', colors.green);
-        log('  [2] Exit', colors.dim);
-    }
-
-    console.log('');
-    const choice = await ask(rl, `${colors.cyan}Select option: ${colors.reset}`);
-
-    return { choice: choice.trim(), installed };
-}
-
-// Install function
-async function performInstall(isUpdate = false) {
-    const paths = getInstallPaths();
-    const { isWindows } = getPlatform();
-
-    console.log('');
-    log(isUpdate ? '── Updating Pulse ──' : '── Installing Pulse ──', colors.cyan);
-    console.log('');
-
-    // Check Node.js
-    logInfo('Checking Node.js...');
-    let nodeVersion = checkNodeInstalled();
-    if (nodeVersion) {
-        logSuccess(`Node.js ${nodeVersion} found`);
-    } else {
-        logWarn('Node.js not found!');
-        const { isWindows, isMac } = getPlatform();
-
-        if (isWindows || isMac) {
-            logInfo('Node.js is required. Attempting to install automatically...');
-            const installed = await installNodeJS();
-            if (installed) {
-                nodeVersion = checkNodeInstalled();
-                if (!nodeVersion) {
-                    logWarn('Please restart your terminal/computer and run the installer again.');
-                    return false;
-                }
-            } else {
-                return false;
-            }
-        } else {
-            logError('Please install Node.js manually:');
-            log('  sudo apt install nodejs npm', colors.bright);
-            log('  or visit: https://nodejs.org/', colors.bright);
-            return false;
-        }
-    }
-
-    // Check for latest release
-    logInfo('Checking for latest version...');
-    let releaseVersion = CONFIG.version;
-    let downloadUrl = null;
-
-    try {
-        const release = await getLatestRelease();
-        if (release) {
-            releaseVersion = release.tag_name.replace(/^v/, '');
-            downloadUrl = release.zipball_url;
-            logSuccess(`Latest version: ${releaseVersion}`);
-        } else {
-            logWarn('No releases found, using bundled version');
-        }
-    } catch (error) {
-        logWarn('Could not check for releases');
-    }
+    info('Installing Pulse...');
+    log(`${c.dim}From: ${sourcePath}${c.reset}`);
+    log(`${c.dim}To: ${destPath}${c.reset}`);
+    log('');
 
     // Enable debug mode
-    logInfo('Enabling CEP debug mode...');
-    enableDebugMode();
-    logSuccess('Debug mode enabled');
-
-    // Create directories
-    logInfo('Creating directories...');
-    fs.mkdirSync(paths.cepExtensions, { recursive: true });
-    fs.mkdirSync(paths.pulseData, { recursive: true });
-    logSuccess('Directories created');
-
-    // Get source
-    let sourceDir;
-    const bundledPath = getBundledPath();
-
-    if (downloadUrl) {
-        logInfo('Downloading latest release...');
-        const tempDir = path.join(os.tmpdir(), 'pulse-install-' + Date.now());
-        const zipPath = path.join(tempDir, 'pulse.zip');
-
-        fs.mkdirSync(tempDir, { recursive: true });
-
-        try {
-            await downloadFile(downloadUrl, zipPath, (downloaded, total) => {
-                showProgress(downloaded, total, 'Downloading');
-            });
-            logSuccess('Download complete');
-
-            logInfo('Extracting files...');
-            extractZip(zipPath, tempDir);
-            sourceDir = findExtractedFolder(tempDir);
-            logSuccess('Extraction complete');
-        } catch (error) {
-            logError(`Download failed: ${error.message}`);
-            if (bundledPath) {
-                logInfo('Using bundled version instead...');
-                sourceDir = bundledPath;
-            } else {
-                logError('No bundled version available.');
-                return false;
-            }
-        }
-    } else if (bundledPath) {
-        logInfo('Using bundled version...');
-        sourceDir = bundledPath;
+    info('Enabling CEP debug mode...');
+    if (enableDebugMode()) {
+        ok('Debug mode enabled');
     } else {
-        logError('No download available and no bundled version found.');
+        warn('Could not enable debug mode automatically');
+    }
+
+    // Create parent directory
+    const parentDir = path.dirname(destPath);
+    if (!fs.existsSync(parentDir)) {
+        fs.mkdirSync(parentDir, { recursive: true });
+    }
+
+    // Remove existing installation
+    if (fs.existsSync(destPath)) {
+        info('Removing old installation...');
+        removeDir(destPath);
+    }
+
+    // Copy files
+    info('Copying extension files...');
+    try {
+        copyDir(sourcePath, destPath);
+        ok('Files copied');
+    } catch (e) {
+        err(`Failed to copy files: ${e.message}`);
         return false;
     }
 
-    // Install CEP extension
-    logInfo('Installing CEP extension...');
-    const cepSource = path.join(sourceDir, 'cep-extension');
-    if (fs.existsSync(cepSource)) {
-        removeDir(paths.extensionPath);
-        copyDir(cepSource, paths.extensionPath);
-        logSuccess('CEP extension installed');
+    // Verify installation
+    if (fs.existsSync(path.join(destPath, 'index.html'))) {
+        ok('Installation verified');
     } else {
-        logError('CEP extension not found');
+        err('Installation verification failed');
         return false;
     }
 
-    // Install worker
-    logInfo('Installing worker...');
-    const workerSource = path.join(sourceDir, 'worker');
-    if (fs.existsSync(workerSource)) {
-        removeDir(paths.workerPath);
-        copyDir(workerSource, paths.workerPath);
-
-        logInfo('Installing dependencies...');
-        try {
-            execSync('npm install --production', {
-                cwd: paths.workerPath,
-                stdio: 'pipe'
-            });
-            logSuccess('Dependencies installed');
-        } catch (error) {
-            logWarn('Could not install dependencies automatically');
-            logInfo(`Run manually: cd "${paths.workerPath}" && npm install`);
-        }
-    } else {
-        logError('Worker not found');
-        return false;
-    }
-
-    // Create launch scripts and config
-    logInfo('Creating launch scripts...');
-    createLaunchScripts(paths);
-    createConfig(paths, releaseVersion);
-    logSuccess('Setup complete');
-
-    // Success message
-    console.log('');
-    log('╔══════════════════════════════════════════════════╗', colors.green);
-    log('║                                                  ║', colors.green);
-    log(isUpdate ? '║          Update Complete!                        ║' : '║          Installation Complete!                  ║', colors.green);
-    log('║                                                  ║', colors.green);
-    log('╚══════════════════════════════════════════════════╝', colors.green);
-    console.log('');
-
-    log('Next Steps:', colors.bright);
-    log('  1. Start the Pulse Worker:', colors.yellow);
-    if (isWindows) {
-        log(`     Double-click "Pulse Worker" on Desktop`, colors.dim);
-    } else {
-        log(`     Run: ${path.join(paths.pulseData, 'start-worker.sh')}`, colors.dim);
-    }
-    log('  2. Restart After Effects', colors.yellow);
-    log('  3. Open Window > Extensions > Pulse', colors.yellow);
-    console.log('');
+    log('');
+    log(`${c.green}╔══════════════════════════════════════════════════╗${c.reset}`);
+    log(`${c.green}║          Installation Complete!                  ║${c.reset}`);
+    log(`${c.green}╚══════════════════════════════════════════════════╝${c.reset}`);
+    log('');
+    log(`${c.yellow}Next steps:${c.reset}`);
+    log(`  1. Restart After Effects (completely close and reopen)`);
+    log(`  2. Go to Window → Extensions → Pulse`);
+    log('');
 
     return true;
 }
 
-// Uninstall function
-async function performUninstall(rl) {
-    console.log('');
-    log('── Uninstalling Pulse ──', colors.red);
-    console.log('');
+async function uninstall(rl) {
+    const destPath = getExtensionPath();
 
-    const confirm = await ask(rl, `${colors.yellow}Are you sure you want to uninstall Pulse? (yes/no): ${colors.reset}`);
+    log('');
+    const confirm = await ask(rl, `${c.yellow}Are you sure you want to uninstall Pulse? (yes/no): ${c.reset}`);
 
     if (confirm.toLowerCase() !== 'yes' && confirm.toLowerCase() !== 'y') {
-        logInfo('Uninstall cancelled');
-        return false;
+        info('Cancelled');
+        return;
     }
 
-    const paths = getInstallPaths();
+    info('Uninstalling Pulse...');
 
-    // Remove CEP extension
-    logInfo('Removing CEP extension...');
-    removeDir(paths.extensionPath);
-    logSuccess('CEP extension removed');
-
-    // Remove worker
-    logInfo('Removing worker...');
-    removeDir(paths.workerPath);
-    logSuccess('Worker removed');
-
-    // Remove launch scripts
-    logInfo('Removing launch scripts...');
-    removeLaunchScripts(paths);
-    logSuccess('Launch scripts removed');
-
-    // Remove config (optional - keep data?)
-    const keepData = await ask(rl, `${colors.yellow}Keep user data and cache? (yes/no): ${colors.reset}`);
-
-    if (keepData.toLowerCase() !== 'yes' && keepData.toLowerCase() !== 'y') {
-        logInfo('Removing user data...');
-        removeDir(paths.pulseData);
-        logSuccess('User data removed');
+    if (fs.existsSync(destPath)) {
+        removeDir(destPath);
+        ok('Extension removed');
     } else {
-        // Just remove config
-        if (fs.existsSync(paths.configPath)) {
-            fs.unlinkSync(paths.configPath);
-        }
-        logInfo('User data preserved');
+        warn('Extension not found');
     }
 
-    // Optionally disable debug mode
-    const disableDebug = await ask(rl, `${colors.yellow}Disable CEP debug mode? (yes/no): ${colors.reset}`);
+    const removeCacheQ = await ask(rl, `${c.yellow}Remove cache folder (~/Pulse_Cache)? (yes/no): ${c.reset}`);
+    if (removeCacheQ.toLowerCase() === 'yes' || removeCacheQ.toLowerCase() === 'y') {
+        const cacheDir = path.join(os.homedir(), 'Pulse_Cache');
+        if (fs.existsSync(cacheDir)) {
+            removeDir(cacheDir);
+            ok('Cache removed');
+        }
+    }
 
-    if (disableDebug.toLowerCase() === 'yes' || disableDebug.toLowerCase() === 'y') {
-        logInfo('Disabling debug mode...');
+    const disableDebugQ = await ask(rl, `${c.yellow}Disable CEP debug mode? (yes/no): ${c.reset}`);
+    if (disableDebugQ.toLowerCase() === 'yes' || disableDebugQ.toLowerCase() === 'y') {
         disableDebugMode();
-        logSuccess('Debug mode disabled');
+        ok('Debug mode disabled');
     }
 
-    console.log('');
-    log('╔══════════════════════════════════════════════════╗', colors.green);
-    log('║                                                  ║', colors.green);
-    log('║          Uninstall Complete!                     ║', colors.green);
-    log('║                                                  ║', colors.green);
-    log('╚══════════════════════════════════════════════════╝', colors.green);
-    console.log('');
-
-    log('Pulse has been removed from your system.', colors.dim);
-    console.log('');
-
-    return true;
+    log('');
+    ok('Uninstall complete');
 }
 
-// Check for updates
-async function checkForUpdates() {
-    console.log('');
-    log('── Checking for Updates ──', colors.cyan);
-    console.log('');
-
-    const installedVersion = getInstalledVersion();
-    logInfo(`Installed version: ${installedVersion || 'unknown'}`);
-
-    logInfo('Checking GitHub for latest version...');
-
-    try {
-        const release = await getLatestRelease();
-        if (release) {
-            const latestVersion = release.tag_name.replace(/^v/, '');
-            logInfo(`Latest version: ${latestVersion}`);
-
-            if (installedVersion && latestVersion !== installedVersion) {
-                console.log('');
-                log(`Update available: ${installedVersion} → ${latestVersion}`, colors.green);
-                log('Select "Update Pulse" from the menu to update.', colors.yellow);
-            } else {
-                console.log('');
-                logSuccess('You have the latest version!');
-            }
-        } else {
-            logWarn('No releases found on GitHub');
-        }
-    } catch (error) {
-        logError(`Failed to check for updates: ${error.message}`);
-    }
-
-    console.log('');
-}
-
-// Main function
 async function main() {
     const rl = createRL();
 
     try {
         while (true) {
             showHeader();
-            const { choice, installed } = await showMenu(rl);
+
+            const installed = isInstalled();
+            const { isWindows, isMac } = getPlatform();
+
+            log(`${c.dim}Platform: ${isWindows ? 'Windows' : isMac ? 'macOS' : 'Linux'}${c.reset}`);
+            log(`${c.dim}Status: ${installed ? 'Installed' : 'Not installed'}${c.reset}`);
+            log('');
 
             if (installed) {
-                switch (choice) {
-                    case '1': // Update
-                        await performInstall(true);
+                log('  [1] Reinstall Pulse');
+                log(`  ${c.red}[2] Uninstall Pulse${c.reset}`);
+                log(`  ${c.dim}[3] Exit${c.reset}`);
+            } else {
+                log(`  ${c.green}[1] Install Pulse${c.reset}`);
+                log(`  ${c.dim}[2] Exit${c.reset}`);
+            }
+
+            log('');
+            const choice = await ask(rl, `${c.cyan}Select option: ${c.reset}`);
+
+            if (installed) {
+                switch (choice.trim()) {
+                    case '1':
+                        await install();
                         await ask(rl, 'Press Enter to continue...');
                         break;
-                    case '2': // Reinstall
-                        await performInstall(false);
+                    case '2':
+                        await uninstall(rl);
                         await ask(rl, 'Press Enter to continue...');
                         break;
-                    case '3': // Uninstall
-                        await performUninstall(rl);
-                        await ask(rl, 'Press Enter to continue...');
-                        break;
-                    case '4': // Check updates
-                        await checkForUpdates();
-                        await ask(rl, 'Press Enter to continue...');
-                        break;
-                    case '5': // Exit
+                    case '3':
                         rl.close();
                         process.exit(0);
-                        break;
                     default:
-                        logWarn('Invalid option');
+                        warn('Invalid option');
                         await ask(rl, 'Press Enter to continue...');
                 }
             } else {
-                switch (choice) {
-                    case '1': // Install
-                        await performInstall(false);
+                switch (choice.trim()) {
+                    case '1':
+                        await install();
                         await ask(rl, 'Press Enter to continue...');
                         break;
-                    case '2': // Exit
+                    case '2':
                         rl.close();
                         process.exit(0);
-                        break;
                     default:
-                        logWarn('Invalid option');
+                        warn('Invalid option');
                         await ask(rl, 'Press Enter to continue...');
                 }
             }
         }
-    } catch (error) {
-        logError(`Error: ${error.message}`);
+    } catch (e) {
+        err(e.message);
         rl.close();
         process.exit(1);
     }
 }
 
-// Run
 main();

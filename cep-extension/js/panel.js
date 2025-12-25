@@ -1,32 +1,36 @@
 /**
  * Pulse for After Effects - Panel Controller
- * Handles UI interactions, worker communication, and ExtendScript calls
- *
- * Version 1.0.0
+ * Self-contained - no external worker required
+ * Uses CEP's embedded Node.js for all operations
  */
 
 (function() {
     'use strict';
 
+    // Node.js modules (available in CEP with --enable-nodejs)
+    const fs = window.cep_node ? window.cep_node.require('fs') : null;
+    const path = window.cep_node ? window.cep_node.require('path') : null;
+    const os = window.cep_node ? window.cep_node.require('os') : null;
+    const { spawn } = window.cep_node ? window.cep_node.require('child_process') : {};
+    const crypto = window.cep_node ? window.cep_node.require('crypto') : null;
+
+    // Fallback for non-CEP environments (testing)
+    const nodeAvailable = !!(fs && path && os);
+
     // Configuration
     const CONFIG = {
-        workerUrl: 'http://localhost:3847',
-        pollInterval: 3000,
-        reconnectInterval: 5000,
-        requestTimeout: 30000,
-        maxRetries: 3
+        cacheDir: null, // Set on init
+        format: 'png',
+        aerenderPath: null // Auto-detected
     };
 
     // State
     const state = {
         csInterface: null,
-        connected: false,
-        connecting: false,
+        tokens: {},
         draftModeActive: false,
-        tokens: [],
         profilerResults: [],
-        retryCount: 0,
-        lastError: null
+        ready: false
     };
 
     // Initialize when DOM is ready
@@ -42,55 +46,149 @@
         try {
             // Initialize CSInterface
             if (typeof CSInterface === 'undefined') {
-                showFatalError('CSInterface not loaded. Please restart After Effects.');
+                showError('CSInterface not loaded. Please restart After Effects.');
                 return;
             }
 
             state.csInterface = new CSInterface();
 
-            // Test ExtendScript connection
-            testExtendScriptConnection();
+            // Setup paths
+            setupPaths();
 
-            // Load settings from storage
-            loadSettings();
+            // Detect aerender
+            detectAerender();
 
-            // Setup event listeners
+            // Load saved tokens
+            loadTokens();
+
+            // Setup UI
             setupEventListeners();
 
-            // Check worker connection
-            checkWorkerConnection();
+            // Test ExtendScript
+            testExtendScript();
 
-            // Start polling for status updates
-            startPolling();
+            state.ready = true;
+            updateStatus('ready');
+            log('success', 'Pulse ready');
 
-            log('info', 'Panel initialized');
         } catch (error) {
-            console.error('[Pulse] Initialization error:', error);
-            showFatalError('Initialization failed: ' + error.message);
+            console.error('[Pulse] Init error:', error);
+            showError('Initialization failed: ' + error.message);
         }
     }
 
-    function showFatalError(message) {
+    function setupPaths() {
+        if (!nodeAvailable) {
+            CONFIG.cacheDir = '';
+            return;
+        }
+
+        // Default cache directory
+        const homeDir = os.homedir();
+        CONFIG.cacheDir = path.join(homeDir, 'Pulse_Cache');
+
+        // Create cache dir if needed
+        if (!fs.existsSync(CONFIG.cacheDir)) {
+            fs.mkdirSync(CONFIG.cacheDir, { recursive: true });
+        }
+
+        console.log('[Pulse] Cache directory:', CONFIG.cacheDir);
+    }
+
+    function detectAerender() {
+        if (!nodeAvailable) return;
+
+        const platform = os.platform();
+        const possiblePaths = [];
+
+        if (platform === 'win32') {
+            // Windows paths
+            const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+            const adobeDir = path.join(programFiles, 'Adobe');
+
+            if (fs.existsSync(adobeDir)) {
+                try {
+                    const versions = fs.readdirSync(adobeDir)
+                        .filter(d => d.includes('After Effects'))
+                        .sort()
+                        .reverse();
+
+                    for (const ver of versions) {
+                        possiblePaths.push(path.join(adobeDir, ver, 'Support Files', 'aerender.exe'));
+                    }
+                } catch (e) {}
+            }
+        } else if (platform === 'darwin') {
+            // macOS paths
+            const apps = '/Applications';
+            if (fs.existsSync(apps)) {
+                try {
+                    const versions = fs.readdirSync(apps)
+                        .filter(d => d.includes('Adobe After Effects'))
+                        .sort()
+                        .reverse();
+
+                    for (const ver of versions) {
+                        possiblePaths.push(path.join(apps, ver, 'aerender'));
+                    }
+                } catch (e) {}
+            }
+        }
+
+        for (const p of possiblePaths) {
+            if (fs.existsSync(p)) {
+                CONFIG.aerenderPath = p;
+                console.log('[Pulse] Found aerender:', p);
+                return;
+            }
+        }
+
+        console.warn('[Pulse] aerender not found');
+    }
+
+    function showError(message) {
         const app = document.getElementById('app');
         if (app) {
             app.innerHTML = `
                 <div style="padding: 20px; color: #f44336;">
                     <h2>Error</h2>
                     <p>${message}</p>
-                    <p style="margin-top: 10px; color: #999;">Try restarting After Effects.</p>
                 </div>
             `;
         }
     }
 
-    async function testExtendScriptConnection() {
+    function updateStatus(status) {
+        const statusEl = document.getElementById('connection-status');
+        const textEl = statusEl?.querySelector('.status-text');
+
+        if (!statusEl || !textEl) return;
+
+        statusEl.className = 'status-indicator ' + status;
+
+        switch (status) {
+            case 'ready':
+                textEl.textContent = 'Ready';
+                break;
+            case 'busy':
+                textEl.textContent = 'Working...';
+                break;
+            case 'error':
+                textEl.textContent = 'Error';
+                break;
+            default:
+                textEl.textContent = 'Ready';
+        }
+    }
+
+    async function testExtendScript() {
         try {
             const result = await evalScript('pulse_ping()');
             if (result && result.success) {
-                console.log('[Pulse] ExtendScript connected, AE version:', result.aeVersion);
+                console.log('[Pulse] ExtendScript OK, AE:', result.aeVersion);
             }
-        } catch (error) {
-            console.warn('[Pulse] ExtendScript test failed:', error.message);
+        } catch (e) {
+            console.warn('[Pulse] ExtendScript test failed:', e.message);
         }
     }
 
@@ -103,214 +201,76 @@
         });
 
         // Quick Toggles
-        const draftSlider = document.getElementById('draft-aggressiveness');
-        if (draftSlider) {
-            draftSlider.addEventListener('input', updateAggressivenessDisplay);
-        }
+        const slider = document.getElementById('draft-aggressiveness');
+        if (slider) slider.addEventListener('input', updateAggressivenessDisplay);
 
         addClickListener('btn-draft-enable', enableDraftMode);
         addClickListener('btn-draft-disable', disableDraftMode);
         addClickListener('btn-refresh-comp', refreshCompSummary);
-        addClickListener('btn-create-token', createTokenFromSelection);
+        addClickListener('btn-create-token', createToken);
 
         // Tokens
-        addClickListener('btn-refresh-tokens', refreshTokens);
+        addClickListener('btn-refresh-tokens', renderTokensList);
 
         // Profiler
         addClickListener('btn-run-profiler', runProfiler);
 
         // Settings
         addClickListener('btn-save-settings', saveSettings);
+        addClickListener('btn-open-cache', openCacheFolder);
+
+        // Load settings into UI
+        loadSettingsUI();
     }
 
     function addClickListener(id, handler) {
         const el = document.getElementById(id);
-        if (el) {
-            el.addEventListener('click', handler);
-        }
+        if (el) el.addEventListener('click', handler);
     }
 
-    // ==================== Tab Navigation ====================
+    // ==================== Tabs ====================
 
     function switchTab(tabId) {
-        // Update tab buttons
         document.querySelectorAll('.tab').forEach(tab => {
             tab.classList.toggle('active', tab.dataset.tab === tabId);
         });
 
-        // Update tab content
         document.querySelectorAll('.tab-content').forEach(content => {
             content.classList.toggle('active', content.id === `tab-${tabId}`);
         });
 
-        // Refresh data when switching tabs
-        if (tabId === 'tokens' && state.connected) {
-            refreshTokens();
-        }
+        if (tabId === 'tokens') renderTokensList();
     }
 
-    // ==================== Worker Communication ====================
-
-    async function workerRequest(method, endpoint, data = null, retries = 0) {
-        const url = CONFIG.workerUrl + endpoint;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.requestTimeout);
-
-        const options = {
-            method: method,
-            headers: { 'Content-Type': 'application/json' },
-            signal: controller.signal
-        };
-
-        if (data) {
-            options.body = JSON.stringify(data);
-        }
-
-        try {
-            const response = await fetch(url, options);
-            clearTimeout(timeout);
-
-            if (!response.ok) {
-                const errorText = await response.text().catch(() => 'Unknown error');
-                throw new Error(`HTTP ${response.status}: ${errorText}`);
-            }
-
-            const result = await response.json();
-
-            // Reset retry count on success
-            state.retryCount = 0;
-
-            return result;
-        } catch (error) {
-            clearTimeout(timeout);
-
-            if (error.name === 'AbortError') {
-                throw new Error('Request timed out');
-            }
-
-            // Retry logic
-            if (retries < CONFIG.maxRetries && !error.message.includes('timed out')) {
-                console.log(`[Pulse] Retrying ${endpoint} (attempt ${retries + 1}/${CONFIG.maxRetries})`);
-                await sleep(1000 * (retries + 1)); // Exponential backoff
-                return workerRequest(method, endpoint, data, retries + 1);
-            }
-
-            console.error(`[Pulse] Worker request failed: ${endpoint}`, error);
-            throw error;
-        }
-    }
-
-    async function checkWorkerConnection() {
-        if (state.connecting) return state.connected;
-
-        state.connecting = true;
-        setConnectionStatus('connecting');
-
-        try {
-            const result = await workerRequest('GET', '/health');
-
-            if (!state.connected) {
-                log('success', 'Connected to worker');
-            }
-
-            setConnectionStatus('connected');
-            state.connected = true;
-            state.retryCount = 0;
-            state.lastError = null;
-
-            // Show aerender status
-            if (result.aerender && !result.aerender.available) {
-                log('warning', 'aerender not found - configure path in Settings');
-            }
-
-            return true;
-        } catch (error) {
-            setConnectionStatus('disconnected');
-            state.connected = false;
-            state.retryCount++;
-            state.lastError = error.message;
-
-            if (state.retryCount === 1) {
-                log('error', 'Worker not available - start it with: cd worker && npm start');
-            }
-
-            return false;
-        } finally {
-            state.connecting = false;
-        }
-    }
-
-    function setConnectionStatus(status) {
-        const statusEl = document.getElementById('connection-status');
-        const textEl = statusEl?.querySelector('.status-text');
-
-        if (!statusEl || !textEl) return;
-
-        statusEl.classList.remove('connected', 'disconnected', 'connecting');
-        statusEl.classList.add(status);
-
-        switch (status) {
-            case 'connected':
-                textEl.textContent = 'Connected';
-                break;
-            case 'connecting':
-                textEl.textContent = 'Connecting...';
-                break;
-            default:
-                textEl.textContent = 'Disconnected';
-        }
-    }
-
-    function startPolling() {
-        // Check connection periodically
-        setInterval(() => {
-            if (!state.connected && !state.connecting) {
-                checkWorkerConnection();
-            }
-        }, CONFIG.reconnectInterval);
-
-        // Poll for token status updates when connected and tokens tab is active
-        setInterval(() => {
-            if (state.connected && document.querySelector('#tab-tokens.active')) {
-                refreshTokens();
-            }
-        }, CONFIG.pollInterval);
-    }
-
-    // ==================== ExtendScript Communication ====================
+    // ==================== ExtendScript ====================
 
     function evalScript(script) {
         return new Promise((resolve, reject) => {
             if (!state.csInterface) {
-                reject(new Error('CSInterface not initialized'));
+                reject(new Error('CSInterface not ready'));
                 return;
             }
 
-            const timeoutId = setTimeout(() => {
-                reject(new Error('ExtendScript timed out'));
-            }, 30000);
+            const timeout = setTimeout(() => reject(new Error('Script timeout')), 30000);
 
             try {
                 state.csInterface.evalScript(script, (result) => {
-                    clearTimeout(timeoutId);
+                    clearTimeout(timeout);
 
                     if (result === 'EvalScript error.' || result === 'undefined') {
-                        reject(new Error('ExtendScript evaluation error. Make sure a composition is open.'));
+                        reject(new Error('Script error'));
                         return;
                     }
 
                     try {
-                        // Try to parse as JSON, otherwise return raw result
-                        const parsed = JSON.parse(result);
-                        resolve(parsed);
+                        resolve(JSON.parse(result));
                     } catch (e) {
-                        // Return raw result if not JSON
                         resolve(result);
                     }
                 });
-            } catch (error) {
-                clearTimeout(timeoutId);
-                reject(error);
+            } catch (e) {
+                clearTimeout(timeout);
+                reject(e);
             }
         });
     }
@@ -320,39 +280,29 @@
     function updateAggressivenessDisplay() {
         const slider = document.getElementById('draft-aggressiveness');
         const display = document.getElementById('aggressiveness-value');
-        if (slider && display) {
-            display.textContent = slider.value;
-        }
+        if (slider && display) display.textContent = slider.value;
     }
 
     async function enableDraftMode() {
         const slider = document.getElementById('draft-aggressiveness');
-        const aggressiveness = slider ? parseInt(slider.value) : 2;
+        const level = slider ? parseInt(slider.value) : 2;
 
-        log('info', `Enabling draft mode (level ${aggressiveness})...`);
+        log('info', `Enabling draft mode (level ${level})...`);
 
         try {
-            const result = await evalScript(`pulse_applyDraftMode(true, ${aggressiveness})`);
+            const result = await evalScript(`pulse_applyDraftMode(true, ${level})`);
 
-            if (result && result.success) {
+            if (result?.success) {
                 state.draftModeActive = true;
-
-                const btnEnable = document.getElementById('btn-draft-enable');
-                const btnDisable = document.getElementById('btn-draft-disable');
-                if (btnEnable) btnEnable.disabled = true;
-                if (btnDisable) btnDisable.disabled = false;
-
-                const statusEl = document.getElementById('draft-status');
-                const detailsEl = document.getElementById('draft-status-details');
-                if (statusEl) statusEl.classList.remove('hidden');
-                if (detailsEl) detailsEl.textContent = `Level ${aggressiveness} - ${result.changes || 'Settings applied'}`;
-
+                document.getElementById('btn-draft-enable').disabled = true;
+                document.getElementById('btn-draft-disable').disabled = false;
+                document.getElementById('draft-status')?.classList.remove('hidden');
                 log('success', 'Draft mode enabled');
             } else {
-                log('error', result?.error || 'Failed to enable draft mode');
+                log('error', result?.error || 'Failed');
             }
-        } catch (error) {
-            log('error', 'Draft mode error: ' + error.message);
+        } catch (e) {
+            log('error', e.message);
         }
     }
 
@@ -362,103 +312,110 @@
         try {
             const result = await evalScript('pulse_applyDraftMode(false, 0)');
 
-            if (result && result.success) {
+            if (result?.success) {
                 state.draftModeActive = false;
-
-                const btnEnable = document.getElementById('btn-draft-enable');
-                const btnDisable = document.getElementById('btn-draft-disable');
-                const statusEl = document.getElementById('draft-status');
-
-                if (btnEnable) btnEnable.disabled = false;
-                if (btnDisable) btnDisable.disabled = true;
-                if (statusEl) statusEl.classList.add('hidden');
-
-                log('success', 'Draft mode disabled, settings restored');
-            } else {
-                log('error', result?.error || 'Failed to disable draft mode');
+                document.getElementById('btn-draft-enable').disabled = false;
+                document.getElementById('btn-draft-disable').disabled = true;
+                document.getElementById('draft-status')?.classList.add('hidden');
+                log('success', 'Draft mode disabled');
             }
-        } catch (error) {
-            log('error', 'Draft mode error: ' + error.message);
+        } catch (e) {
+            log('error', e.message);
         }
     }
 
     // ==================== Comp Summary ====================
 
     async function refreshCompSummary() {
-        log('info', 'Refreshing composition summary...');
-
         try {
             const result = await evalScript('pulse_getActiveCompSummary()');
-            const summaryEl = document.getElementById('comp-summary');
+            const el = document.getElementById('comp-summary');
+            if (!el) return;
 
-            if (!summaryEl) return;
-
-            if (result && result.success && result.comp) {
-                const comp = result.comp;
-                summaryEl.innerHTML = `
-                    <p><strong>${escapeHtml(comp.name)}</strong></p>
-                    <p>${comp.width}x${comp.height} @ ${comp.frameRate}fps</p>
-                    <p>Duration: ${comp.duration.toFixed(2)}s (${comp.numFrames} frames)</p>
-                    <p>Layers: ${comp.numLayers} (${comp.numPrecomps} precomps)</p>
+            if (result?.success && result.comp) {
+                const c = result.comp;
+                el.innerHTML = `
+                    <p><strong>${esc(c.name)}</strong></p>
+                    <p>${c.width}x${c.height} @ ${c.frameRate}fps</p>
+                    <p>Duration: ${c.duration.toFixed(2)}s</p>
+                    <p>Layers: ${c.numLayers}</p>
                 `;
-                log('success', 'Comp summary updated');
             } else {
-                summaryEl.innerHTML = '<p class="muted">No active composition</p>';
-                log('warning', result?.error || 'No active composition');
+                el.innerHTML = '<p class="muted">No active composition</p>';
             }
-        } catch (error) {
-            log('error', 'Failed to get comp summary: ' + error.message);
+        } catch (e) {
+            log('error', e.message);
         }
     }
 
     // ==================== Token Management ====================
 
-    async function createTokenFromSelection() {
-        if (!state.connected) {
-            log('error', 'Worker not connected. Start worker first.');
-            return;
-        }
+    function loadTokens() {
+        if (!nodeAvailable) return;
 
-        log('info', 'Creating token from selection...');
-
+        const tokensFile = path.join(CONFIG.cacheDir, 'tokens.json');
         try {
-            // Get precomp info from AE
-            const precompInfo = await evalScript('pulse_createPrecompToken()');
-
-            if (!precompInfo || !precompInfo.success) {
-                log('error', precompInfo?.error || 'No valid precomp selected');
-                return;
+            if (fs.existsSync(tokensFile)) {
+                state.tokens = JSON.parse(fs.readFileSync(tokensFile, 'utf8'));
             }
-
-            // Send to worker to create token
-            const response = await workerRequest('POST', '/token/create', {
-                compName: precompInfo.compName,
-                precompName: precompInfo.precompName,
-                layerIndex: precompInfo.layerIndex,
-                frameRate: precompInfo.frameRate,
-                duration: precompInfo.duration,
-                width: precompInfo.width,
-                height: precompInfo.height,
-                summary: precompInfo.summary
-            });
-
-            log('success', `Token created: ${response.tokenId}`);
-            await refreshTokens();
-            switchTab('tokens');
-        } catch (error) {
-            log('error', 'Failed to create token: ' + error.message);
+        } catch (e) {
+            console.error('[Pulse] Failed to load tokens:', e);
+            state.tokens = {};
         }
     }
 
-    async function refreshTokens() {
-        if (!state.connected) return;
+    function saveTokens() {
+        if (!nodeAvailable) return;
+
+        const tokensFile = path.join(CONFIG.cacheDir, 'tokens.json');
+        try {
+            fs.writeFileSync(tokensFile, JSON.stringify(state.tokens, null, 2));
+        } catch (e) {
+            console.error('[Pulse] Failed to save tokens:', e);
+        }
+    }
+
+    async function createToken() {
+        log('info', 'Creating token...');
 
         try {
-            const result = await workerRequest('GET', '/tokens');
-            state.tokens = result.tokens || [];
+            const info = await evalScript('pulse_createPrecompToken()');
+
+            if (!info?.success) {
+                log('error', info?.error || 'Select a precomp layer first');
+                return;
+            }
+
+            // Generate token ID
+            const hash = nodeAvailable
+                ? crypto.createHash('md5').update(info.summary).digest('hex').slice(0, 8)
+                : Math.random().toString(36).slice(2, 10);
+
+            const tokenId = `${sanitize(info.precompName)}_${hash}`;
+
+            // Create token
+            state.tokens[tokenId] = {
+                tokenId,
+                compName: info.compName,
+                precompName: info.precompName,
+                layerIndex: info.layerIndex,
+                width: info.width,
+                height: info.height,
+                frameRate: info.frameRate,
+                duration: info.duration,
+                summary: info.summary,
+                status: 'pending',
+                renderPath: null,
+                createdAt: Date.now()
+            };
+
+            saveTokens();
+            log('success', `Token created: ${tokenId}`);
             renderTokensList();
-        } catch (error) {
-            console.error('[Pulse] Failed to refresh tokens:', error);
+            switchTab('tokens');
+
+        } catch (e) {
+            log('error', e.message);
         }
     }
 
@@ -466,162 +423,179 @@
         const container = document.getElementById('tokens-list');
         if (!container) return;
 
-        if (state.tokens.length === 0) {
-            container.innerHTML = '<p class="muted">No tokens created yet. Select a precomp layer and click "Create Token".</p>';
+        const tokens = Object.values(state.tokens);
+
+        if (tokens.length === 0) {
+            container.innerHTML = '<p class="muted">No tokens yet. Select a precomp and click "Create Token".</p>';
             return;
         }
 
-        container.innerHTML = state.tokens.map(token => `
-            <div class="token-item" data-token-id="${escapeHtml(token.tokenId)}">
+        container.innerHTML = tokens.map(t => `
+            <div class="token-item" data-id="${esc(t.tokenId)}">
                 <div class="token-header">
-                    <span class="token-name">${escapeHtml(token.precompName)}</span>
-                    <span class="token-status ${token.status}">${token.status}</span>
+                    <span class="token-name">${esc(t.precompName)}</span>
+                    <span class="token-status ${t.status}">${t.status}</span>
                 </div>
                 <div class="token-info">
-                    ${token.width}x${token.height} @ ${token.frameRate}fps &bull; ${token.duration.toFixed(2)}s
+                    ${t.width}x${t.height} @ ${t.frameRate}fps
                 </div>
                 <div class="token-actions">
-                    ${getTokenActions(token)}
+                    ${t.status === 'ready'
+                        ? `<button class="btn btn-small btn-success" onclick="Pulse.swapIn('${t.tokenId}')">Swap In</button>`
+                        : `<button class="btn btn-small btn-primary" onclick="Pulse.render('${t.tokenId}')">Render</button>`
+                    }
+                    ${t.status === 'swapped'
+                        ? `<button class="btn btn-small btn-warning" onclick="Pulse.swapBack('${t.tokenId}')">Swap Back</button>`
+                        : ''
+                    }
+                    <button class="btn btn-small btn-danger" onclick="Pulse.deleteToken('${t.tokenId}')">Delete</button>
                 </div>
             </div>
         `).join('');
-
-        // Attach event listeners
-        container.querySelectorAll('[data-action]').forEach(btn => {
-            btn.addEventListener('click', handleTokenAction);
-        });
-    }
-
-    function getTokenActions(token) {
-        const actions = [];
-        const tokenId = escapeHtml(token.tokenId);
-
-        switch (token.status) {
-            case 'pending':
-            case 'dirty':
-                actions.push(`<button class="btn btn-small btn-primary" data-action="render" data-token-id="${tokenId}">Render</button>`);
-                break;
-            case 'rendering':
-                actions.push(`<button class="btn btn-small btn-warning" disabled>Rendering...</button>`);
-                break;
-            case 'ready':
-                actions.push(`<button class="btn btn-small btn-success" data-action="swapin" data-token-id="${tokenId}">Swap In</button>`);
-                actions.push(`<button class="btn btn-small btn-secondary" data-action="render" data-token-id="${tokenId}">Re-render</button>`);
-                break;
-            case 'swapped':
-                actions.push(`<button class="btn btn-small btn-warning" data-action="swapback" data-token-id="${tokenId}">Swap Back</button>`);
-                break;
-        }
-
-        actions.push(`<button class="btn btn-small btn-secondary" data-action="dirty" data-token-id="${tokenId}">Mark Dirty</button>`);
-
-        return actions.join('');
-    }
-
-    async function handleTokenAction(event) {
-        const action = event.target.dataset.action;
-        const tokenId = event.target.dataset.tokenId;
-
-        if (!action || !tokenId) return;
-
-        // Disable button during action
-        event.target.disabled = true;
-
-        log('info', `${action}: ${tokenId}`);
-
-        try {
-            switch (action) {
-                case 'render':
-                    await renderToken(tokenId);
-                    break;
-                case 'swapin':
-                    await swapInToken(tokenId);
-                    break;
-                case 'swapback':
-                    await swapBackToken(tokenId);
-                    break;
-                case 'dirty':
-                    await markTokenDirty(tokenId);
-                    break;
-            }
-        } catch (error) {
-            log('error', `Failed to ${action}: ${error.message}`);
-        } finally {
-            event.target.disabled = false;
-        }
     }
 
     async function renderToken(tokenId) {
-        log('info', `Queueing render for ${tokenId}...`);
-
-        // Get project path from AE
-        const projectInfo = await evalScript('pulse_getProjectPath()');
-        if (!projectInfo || !projectInfo.success) {
-            log('error', projectInfo?.error || 'Please save the project before rendering');
-            return;
-        }
-
-        const response = await workerRequest('POST', '/token/render', {
-            tokenId: tokenId,
-            projectPath: projectInfo.path
-        });
-
-        if (response.success) {
-            log('success', 'Render queued - check worker console for progress');
-        } else {
-            log('error', response.error || 'Failed to queue render');
-        }
-
-        await refreshTokens();
-    }
-
-    async function swapInToken(tokenId) {
-        const token = state.tokens.find(t => t.tokenId === tokenId);
+        const token = state.tokens[tokenId];
         if (!token) {
             log('error', 'Token not found');
             return;
         }
 
-        if (!token.renderPath) {
-            log('error', 'No render path available. Render the token first.');
+        if (!CONFIG.aerenderPath) {
+            log('error', 'aerender not found. Configure in Settings.');
             return;
         }
 
-        log('info', `Swapping in ${tokenId}...`);
+        log('info', `Rendering ${token.precompName}...`);
+        updateStatus('busy');
+        token.status = 'rendering';
+        saveTokens();
+        renderTokensList();
 
-        // Escape backslashes for ExtendScript
-        const escapedPath = token.renderPath.replace(/\\/g, '\\\\');
-        const result = await evalScript(`pulse_swapInRender("${tokenId}", "${escapedPath}")`);
+        try {
+            // Get project path
+            const projInfo = await evalScript('pulse_getProjectPath()');
+            if (!projInfo?.success) {
+                throw new Error('Save your project first');
+            }
 
-        if (result && result.success) {
-            await workerRequest('POST', '/token/swapin', { tokenId });
-            log('success', 'Render swapped in');
-            await refreshTokens();
-        } else {
-            log('error', result?.error || 'Swap in failed');
+            // Create output folder
+            const outputDir = path.join(CONFIG.cacheDir, tokenId);
+            if (!fs.existsSync(outputDir)) {
+                fs.mkdirSync(outputDir, { recursive: true });
+            }
+
+            const outputPath = path.join(outputDir, `[#####].${CONFIG.format}`);
+
+            // Build aerender command
+            const args = [
+                '-project', projInfo.path,
+                '-comp', token.precompName,
+                '-output', outputPath,
+                '-OMtemplate', 'Lossless with Alpha',
+                '-RStemplate', 'Best Settings',
+                '-s', '0',
+                '-e', String(Math.ceil(token.duration * token.frameRate) - 1)
+            ];
+
+            // Run aerender
+            await runAerender(args);
+
+            token.status = 'ready';
+            token.renderPath = outputDir;
+            saveTokens();
+            log('success', `Render complete: ${token.precompName}`);
+
+        } catch (e) {
+            token.status = 'error';
+            saveTokens();
+            log('error', `Render failed: ${e.message}`);
+        } finally {
+            updateStatus('ready');
+            renderTokensList();
         }
     }
 
-    async function swapBackToken(tokenId) {
-        log('info', `Swapping back ${tokenId}...`);
+    function runAerender(args) {
+        return new Promise((resolve, reject) => {
+            if (!nodeAvailable) {
+                reject(new Error('Node.js not available'));
+                return;
+            }
 
-        const result = await evalScript(`pulse_swapBack("${tokenId}")`);
+            console.log('[Pulse] Running aerender:', args.join(' '));
 
-        if (result && result.success) {
-            await workerRequest('POST', '/token/swapback', { tokenId });
-            log('success', 'Original precomp restored');
-            await refreshTokens();
-        } else {
-            log('error', result?.error || 'Swap back failed');
+            const proc = spawn(CONFIG.aerenderPath, args);
+
+            let output = '';
+            proc.stdout.on('data', d => { output += d; });
+            proc.stderr.on('data', d => { output += d; });
+
+            proc.on('close', code => {
+                if (code === 0) {
+                    resolve(output);
+                } else {
+                    reject(new Error(`aerender exited with code ${code}`));
+                }
+            });
+
+            proc.on('error', reject);
+        });
+    }
+
+    async function swapIn(tokenId) {
+        const token = state.tokens[tokenId];
+        if (!token || !token.renderPath) {
+            log('error', 'Render the token first');
+            return;
+        }
+
+        log('info', `Swapping in ${token.precompName}...`);
+
+        try {
+            const renderPath = token.renderPath.replace(/\\/g, '\\\\');
+            const result = await evalScript(`pulse_swapInRender("${tokenId}", "${renderPath}")`);
+
+            if (result?.success) {
+                token.status = 'swapped';
+                saveTokens();
+                log('success', 'Swapped in');
+                renderTokensList();
+            } else {
+                log('error', result?.error || 'Swap failed');
+            }
+        } catch (e) {
+            log('error', e.message);
         }
     }
 
-    async function markTokenDirty(tokenId) {
-        await workerRequest('POST', '/token/dirty', { tokenId });
-        await evalScript(`pulse_markTokenDirty("${tokenId}")`);
+    async function swapBack(tokenId) {
+        const token = state.tokens[tokenId];
+        if (!token) return;
 
-        log('success', 'Token marked as dirty');
-        await refreshTokens();
+        log('info', `Restoring ${token.precompName}...`);
+
+        try {
+            const result = await evalScript(`pulse_swapBack("${tokenId}")`);
+
+            if (result?.success) {
+                token.status = 'ready';
+                saveTokens();
+                log('success', 'Restored');
+                renderTokensList();
+            }
+        } catch (e) {
+            log('error', e.message);
+        }
+    }
+
+    function deleteToken(tokenId) {
+        if (confirm('Delete this token?')) {
+            delete state.tokens[tokenId];
+            saveTokens();
+            renderTokensList();
+            log('info', 'Token deleted');
+        }
     }
 
     // ==================== Profiler ====================
@@ -632,15 +606,13 @@
         try {
             const result = await evalScript('pulse_runProfiler()');
 
-            if (result && result.success) {
+            if (result?.success) {
                 state.profilerResults = result.items || [];
                 renderProfilerResults();
-                log('success', `Found ${state.profilerResults.length} heavy items`);
-            } else {
-                log('error', result?.error || 'Profiler failed');
+                log('success', `Found ${state.profilerResults.length} items`);
             }
-        } catch (error) {
-            log('error', 'Profiler error: ' + error.message);
+        } catch (e) {
+            log('error', e.message);
         }
     }
 
@@ -649,144 +621,110 @@
         if (!container) return;
 
         if (state.profilerResults.length === 0) {
-            container.innerHTML = '<p class="muted">No heavy items found in this composition</p>';
+            container.innerHTML = '<p class="muted">No heavy items found</p>';
             return;
         }
 
-        const maxScore = Math.max(...state.profilerResults.map(r => r.score));
+        const max = Math.max(...state.profilerResults.map(r => r.score));
 
         container.innerHTML = state.profilerResults.slice(0, 10).map(item => {
-            const percent = (item.score / maxScore) * 100;
-            const level = percent > 66 ? 'high' : percent > 33 ? 'medium' : 'low';
-
+            const pct = (item.score / max) * 100;
             return `
                 <div class="profiler-item">
                     <div class="profiler-info">
-                        <div class="profiler-name">${escapeHtml(item.name)}</div>
-                        <div class="profiler-details">${escapeHtml(item.type)} &bull; ${escapeHtml(item.details)}</div>
+                        <div class="profiler-name">${esc(item.name)}</div>
+                        <div class="profiler-details">${esc(item.type)}</div>
                     </div>
                     <div class="profiler-score">
                         <div class="score-bar">
-                            <div class="score-fill ${level}" style="width: ${percent}%"></div>
+                            <div class="score-fill" style="width: ${pct}%"></div>
                         </div>
-                        ${item.isPrecomp ?
-                            `<button class="btn btn-small btn-primary" data-profiler-action="token" data-layer-index="${item.layerIndex}">Token</button>` :
-                            ''}
                     </div>
                 </div>
             `;
         }).join('');
-
-        // Attach event listeners for token buttons
-        container.querySelectorAll('[data-profiler-action="token"]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const layerIndex = parseInt(btn.dataset.layerIndex);
-                btn.disabled = true;
-                try {
-                    await evalScript(`pulse_selectLayer(${layerIndex})`);
-                    await createTokenFromSelection();
-                } finally {
-                    btn.disabled = false;
-                }
-            });
-        });
     }
 
     // ==================== Settings ====================
 
-    function loadSettings() {
-        try {
-            const saved = localStorage.getItem('pulse_settings');
-            if (saved) {
-                const settings = JSON.parse(saved);
-                CONFIG.workerUrl = settings.workerUrl || CONFIG.workerUrl;
-
-                setInputValue('setting-worker-url', CONFIG.workerUrl);
-                setInputValue('setting-cache-dir', settings.cacheDir || '');
-                setInputValue('setting-format', settings.format || 'png');
-                setInputValue('setting-concurrency', settings.concurrency || 1);
-                setInputValue('setting-aerender', settings.aerenderPath || '');
-            }
-        } catch (e) {
-            console.error('[Pulse] Failed to load settings:', e);
-        }
+    function loadSettingsUI() {
+        setVal('setting-cache-dir', CONFIG.cacheDir);
+        setVal('setting-format', CONFIG.format);
+        setVal('setting-aerender', CONFIG.aerenderPath || '');
     }
 
-    function setInputValue(id, value) {
-        const el = document.getElementById(id);
-        if (el) el.value = value;
-    }
+    function saveSettings() {
+        CONFIG.cacheDir = getVal('setting-cache-dir') || CONFIG.cacheDir;
+        CONFIG.format = getVal('setting-format') || 'png';
+        CONFIG.aerenderPath = getVal('setting-aerender') || CONFIG.aerenderPath;
 
-    function getInputValue(id, defaultValue = '') {
-        const el = document.getElementById(id);
-        return el ? el.value : defaultValue;
-    }
-
-    async function saveSettings() {
-        const settings = {
-            workerUrl: getInputValue('setting-worker-url', CONFIG.workerUrl),
-            cacheDir: getInputValue('setting-cache-dir'),
-            format: getInputValue('setting-format', 'png'),
-            concurrency: parseInt(getInputValue('setting-concurrency', '1')) || 1,
-            aerenderPath: getInputValue('setting-aerender')
-        };
-
-        // Save locally
-        CONFIG.workerUrl = settings.workerUrl;
-        localStorage.setItem('pulse_settings', JSON.stringify(settings));
-
-        // Send to worker
-        if (state.connected) {
-            try {
-                await workerRequest('POST', '/config', settings);
-                log('success', 'Settings saved');
-            } catch (error) {
-                log('error', 'Failed to save to worker: ' + error.message);
-            }
-        } else {
-            log('warning', 'Settings saved locally (worker not connected)');
+        // Create cache dir if needed
+        if (nodeAvailable && CONFIG.cacheDir && !fs.existsSync(CONFIG.cacheDir)) {
+            fs.mkdirSync(CONFIG.cacheDir, { recursive: true });
         }
 
-        // Re-check connection with new URL
-        state.connected = false;
-        await checkWorkerConnection();
+        log('success', 'Settings saved');
+    }
+
+    function openCacheFolder() {
+        if (!nodeAvailable || !CONFIG.cacheDir) return;
+
+        const platform = os.platform();
+        const cmd = platform === 'win32' ? 'explorer' : 'open';
+
+        require('child_process').exec(`${cmd} "${CONFIG.cacheDir}"`);
+    }
+
+    function setVal(id, val) {
+        const el = document.getElementById(id);
+        if (el) el.value = val || '';
+    }
+
+    function getVal(id) {
+        const el = document.getElementById(id);
+        return el ? el.value : '';
     }
 
     // ==================== Utilities ====================
 
-    function escapeHtml(str) {
+    function esc(str) {
         if (typeof str !== 'string') return str;
         const div = document.createElement('div');
         div.textContent = str;
         return div.innerHTML;
     }
 
-    function sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
+    function sanitize(str) {
+        return str.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32);
     }
 
-    function log(level, message) {
-        const logArea = document.getElementById('log-area');
-        if (!logArea) {
-            console.log(`[Pulse] [${level.toUpperCase()}] ${message}`);
+    function log(level, msg) {
+        const area = document.getElementById('log-area');
+        if (!area) {
+            console.log(`[Pulse] ${msg}`);
             return;
         }
 
-        const timestamp = new Date().toLocaleTimeString();
-
+        const time = new Date().toLocaleTimeString();
         const entry = document.createElement('div');
         entry.className = `log-entry ${level}`;
-        entry.textContent = `[${timestamp}] ${message}`;
+        entry.textContent = `[${time}] ${msg}`;
+        area.appendChild(entry);
+        area.scrollTop = area.scrollHeight;
 
-        logArea.appendChild(entry);
-        logArea.scrollTop = logArea.scrollHeight;
-
-        // Keep only last 50 entries
-        while (logArea.children.length > 50) {
-            logArea.removeChild(logArea.firstChild);
+        while (area.children.length > 50) {
+            area.removeChild(area.firstChild);
         }
 
-        console.log(`[Pulse] [${level.toUpperCase()}] ${message}`);
+        console.log(`[Pulse] [${level}] ${msg}`);
     }
+
+    // Expose global API for button onclick handlers
+    window.Pulse = {
+        render: renderToken,
+        swapIn: swapIn,
+        swapBack: swapBack,
+        deleteToken: deleteToken
+    };
 
 })();
