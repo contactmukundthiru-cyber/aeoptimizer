@@ -307,6 +307,94 @@ function checkNodeInstalled() {
     }
 }
 
+// Get Node.js download URL
+function getNodeDownloadUrl() {
+    const { isWindows, isMac, arch } = getPlatform();
+    const nodeVersion = '20.11.0'; // LTS version
+
+    if (isWindows) {
+        return `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-x64.msi`;
+    } else if (isMac) {
+        const macArch = arch === 'arm64' ? 'arm64' : 'x64';
+        return `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-darwin-${macArch}.pkg`;
+    } else {
+        // Linux - return tarball URL
+        const linuxArch = arch === 'arm64' ? 'arm64' : 'x64';
+        return `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-linux-${linuxArch}.tar.xz`;
+    }
+}
+
+// Install Node.js
+async function installNodeJS() {
+    const { isWindows, isMac } = getPlatform();
+    const downloadUrl = getNodeDownloadUrl();
+    const tempDir = path.join(os.tmpdir(), 'pulse-node-install');
+
+    fs.mkdirSync(tempDir, { recursive: true });
+
+    let installerPath;
+    if (isWindows) {
+        installerPath = path.join(tempDir, 'node-installer.msi');
+    } else if (isMac) {
+        installerPath = path.join(tempDir, 'node-installer.pkg');
+    } else {
+        logError('Auto-install not supported on Linux. Please install Node.js manually:');
+        log('  sudo apt install nodejs npm', colors.bright);
+        log('  or visit: https://nodejs.org/', colors.bright);
+        return false;
+    }
+
+    logInfo('Downloading Node.js...');
+
+    try {
+        await downloadFile(downloadUrl, installerPath, (downloaded, total) => {
+            showProgress(downloaded, total, 'Downloading Node.js');
+        });
+        logSuccess('Download complete');
+    } catch (error) {
+        logError(`Failed to download Node.js: ${error.message}`);
+        return false;
+    }
+
+    logInfo('Installing Node.js (this may require admin privileges)...');
+
+    try {
+        if (isWindows) {
+            // Run MSI installer silently
+            execSync(`msiexec /i "${installerPath}" /qn /norestart`, {
+                stdio: 'inherit',
+                timeout: 300000 // 5 minutes
+            });
+        } else if (isMac) {
+            // Run PKG installer (requires sudo, will prompt)
+            execSync(`sudo installer -pkg "${installerPath}" -target /`, {
+                stdio: 'inherit',
+                timeout: 300000
+            });
+        }
+
+        // Verify installation
+        const newVersion = checkNodeInstalled();
+        if (newVersion) {
+            logSuccess(`Node.js ${newVersion} installed successfully`);
+            return true;
+        } else {
+            logWarn('Node.js installed but not found in PATH. You may need to restart your terminal.');
+            return true;
+        }
+    } catch (error) {
+        logError(`Installation failed: ${error.message}`);
+        log('Please install Node.js manually from: https://nodejs.org/', colors.yellow);
+        return false;
+    } finally {
+        // Cleanup
+        try {
+            fs.unlinkSync(installerPath);
+            fs.rmdirSync(tempDir);
+        } catch (e) {}
+    }
+}
+
 // Create launch scripts
 function createLaunchScripts(paths) {
     const { isWindows } = getPlatform();
@@ -481,13 +569,31 @@ async function performInstall(isUpdate = false) {
 
     // Check Node.js
     logInfo('Checking Node.js...');
-    const nodeVersion = checkNodeInstalled();
+    let nodeVersion = checkNodeInstalled();
     if (nodeVersion) {
         logSuccess(`Node.js ${nodeVersion} found`);
     } else {
-        logError('Node.js not found!');
-        log('Please install Node.js 18+ from: https://nodejs.org/', colors.yellow);
-        return false;
+        logWarn('Node.js not found!');
+        const { isWindows, isMac } = getPlatform();
+
+        if (isWindows || isMac) {
+            logInfo('Node.js is required. Attempting to install automatically...');
+            const installed = await installNodeJS();
+            if (installed) {
+                nodeVersion = checkNodeInstalled();
+                if (!nodeVersion) {
+                    logWarn('Please restart your terminal/computer and run the installer again.');
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            logError('Please install Node.js manually:');
+            log('  sudo apt install nodejs npm', colors.bright);
+            log('  or visit: https://nodejs.org/', colors.bright);
+            return false;
+        }
     }
 
     // Check for latest release
