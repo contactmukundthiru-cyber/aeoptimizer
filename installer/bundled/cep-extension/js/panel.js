@@ -164,7 +164,7 @@
 
         if (!statusEl || !textEl) return;
 
-        statusEl.className = 'status-indicator ' + status;
+        statusEl.className = 'status ' + status;
 
         switch (status) {
             case 'ready':
@@ -550,11 +550,35 @@
             return;
         }
 
+        if (!nodeAvailable) {
+            log('error', 'Node.js not available');
+            return;
+        }
+
+        // Find the first frame file in the render directory
+        let firstFramePath;
+        try {
+            const files = fs.readdirSync(token.renderPath)
+                .filter(f => f.endsWith('.' + CONFIG.format))
+                .sort();
+
+            if (files.length === 0) {
+                log('error', 'No rendered frames found in ' + token.renderPath);
+                return;
+            }
+
+            firstFramePath = path.join(token.renderPath, files[0]);
+        } catch (e) {
+            log('error', 'Could not read render directory: ' + e.message);
+            return;
+        }
+
         log('info', `Swapping in ${token.precompName}...`);
 
         try {
-            const renderPath = token.renderPath.replace(/\\/g, '\\\\');
-            const result = await evalScript(`pulse_swapInRender("${tokenId}", "${renderPath}")`);
+            // Escape backslashes for ExtendScript
+            const escapedPath = firstFramePath.replace(/\\/g, '\\\\');
+            const result = await evalScript(`pulse_swapInRender("${tokenId}", "${escapedPath}")`);
 
             if (result?.success) {
                 token.status = 'swapped';
@@ -672,7 +696,8 @@
         const platform = os.platform();
         const cmd = platform === 'win32' ? 'explorer' : 'open';
 
-        require('child_process').exec(`${cmd} "${CONFIG.cacheDir}"`);
+        const { exec } = window.cep_node.require('child_process');
+        exec(`${cmd} "${CONFIG.cacheDir}"`);
     }
 
     function setVal(id, val) {

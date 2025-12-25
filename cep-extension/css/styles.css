@@ -74,9 +74,14 @@ body {
     background-color: var(--success);
 }
 
-.status.connecting .status-dot {
+.status.connecting .status-dot,
+.status.busy .status-dot {
     background-color: var(--warning);
     animation: pulse 1s infinite;
+}
+
+.status.ready .status-dot {
+    background-color: var(--success);
 }
 
 @keyframes pulse {
