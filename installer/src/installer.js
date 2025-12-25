@@ -360,16 +360,18 @@ async function installNodeJS() {
 
     try {
         if (isWindows) {
-            // Run MSI installer silently
-            execSync(`msiexec /i "${installerPath}" /qn /norestart`, {
+            // Run MSI installer with UI (silent requires admin)
+            log('The Node.js installer will open. Please complete the installation.', colors.yellow);
+            execSync(`msiexec /i "${installerPath}"`, {
                 stdio: 'inherit',
-                timeout: 300000 // 5 minutes
+                timeout: 600000 // 10 minutes for user interaction
             });
         } else if (isMac) {
-            // Run PKG installer (requires sudo, will prompt)
-            execSync(`sudo installer -pkg "${installerPath}" -target /`, {
+            // Open PKG installer (will show GUI)
+            log('The Node.js installer will open. Please complete the installation.', colors.yellow);
+            execSync(`open -W "${installerPath}"`, {
                 stdio: 'inherit',
-                timeout: 300000
+                timeout: 600000
             });
         }
 
