@@ -1,0 +1,147 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+            artifact: PulseInstaller-Windows.exe
+          - os: macos-latest
+            target: mac
+            artifact: PulseInstaller-macOS
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install installer dependencies
+        working-directory: installer
+        run: npm install
+
+      - name: Build installer
+        working-directory: installer
+        run: npm run build:${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: installer/dist/${{ matrix.artifact }}
+
+  build-mac-arm:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install installer dependencies
+        working-directory: installer
+        run: npm install
+
+      - name: Build macOS ARM installer
+        working-directory: installer
+        run: npm run build:mac-arm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PulseInstaller-macOS-ARM
+          path: installer/dist/PulseInstaller-macOS-ARM
+
+  create-release:
+    needs: [build, build-mac-arm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create source zip
+        run: |
+          mkdir -p release
+          cp -r cep-extension release/
+          cp -r worker release/
+          cp -r scripts release/
+          cp README.md LICENSE SECURITY.md release/
+          cd release && zip -r ../Pulse-Source.zip .
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Pulse v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/PulseInstaller-Windows.exe/PulseInstaller-Windows.exe
+            artifacts/PulseInstaller-macOS/PulseInstaller-macOS
+            artifacts/PulseInstaller-macOS-ARM/PulseInstaller-macOS-ARM
+            Pulse-Source.zip
+          body: |
+            ## Pulse for After Effects v${{ steps.version.outputs.version }}
+
+            ### Installation
+
+            **One-Click Installer (Recommended):**
+            1. Download the installer for your platform below
+            2. Run the installer
+            3. Follow the on-screen instructions
+
+            **Manual Installation:**
+            1. Download `Pulse-Source.zip`
+            2. Extract and run `node scripts/install-beta.js`
+
+            ### Downloads
+
+            | Platform | Download |
+            |----------|----------|
+            | Windows | `PulseInstaller-Windows.exe` |
+            | macOS (Intel) | `PulseInstaller-macOS` |
+            | macOS (Apple Silicon) | `PulseInstaller-macOS-ARM` |
+            | Source Code | `Pulse-Source.zip` |
+
+            ### Requirements
+            - Adobe After Effects CC 2019 or later
+            - Node.js 18+ (the installer will check)
+
+            ### What's New
+            See the [CHANGELOG](CHANGELOG.md) for details.

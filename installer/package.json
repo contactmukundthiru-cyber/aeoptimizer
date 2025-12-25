@@ -1,0 +1,20 @@
+{
+  "name": "pulse-installer",
+  "version": "1.0.0",
+  "description": "Pulse for After Effects - Installer",
+  "main": "src/installer.js",
+  "bin": {
+    "pulse-installer": "src/installer.js"
+  },
+  "scripts": {
+    "start": "node src/installer.js",
+    "build": "node build.js",
+    "build:win": "pkg src/installer.js --targets node18-win-x64 --output dist/PulseInstaller-Windows.exe --config pkg.json",
+    "build:mac": "pkg src/installer.js --targets node18-macos-x64 --output dist/PulseInstaller-macOS --config pkg.json",
+    "build:mac-arm": "pkg src/installer.js --targets node18-macos-arm64 --output dist/PulseInstaller-macOS-ARM --config pkg.json",
+    "build:all": "npm run build:win && npm run build:mac && npm run build:mac-arm"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}

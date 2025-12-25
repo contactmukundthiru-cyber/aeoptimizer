@@ -1,0 +1,11 @@
+{
+  "pkg": {
+    "scripts": [
+      "src/**/*.js"
+    ],
+    "assets": [
+      "bundled/**/*"
+    ],
+    "outputPath": "dist"
+  }
+}
